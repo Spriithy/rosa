@@ -1,0 +1,10 @@
+module examples
+
+import maths
+
+def square x = x * x // Lazy evaluation
+
+let main () {
+    let x = 4
+    println square (maths.sqrt x) // Prints 4
+}
