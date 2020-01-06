@@ -2,21 +2,20 @@ package main
 
 import (
 	"fmt"
-
-	"github.com/Spriithy/rosa/pkg/compiler"
+	"github.com/Spriithy/rosa/commands"
 	"github.com/urfave/cli"
+	"os"
 )
 
 func main() {
 	app := cli.NewApp()
 	app.Name = "rosa"
 	app.Usage = "The rosa programming language"
-
-	s := compiler.NewScanner("examples/scanner.rosa")
-	token := s.Scan()
-	for token.Type != compiler.EOF {
-		fmt.Println(token.String())
-		token = s.Scan()
+	app.Commands = []*cli.Command{
+		commands.BuildCommand(),
 	}
-	fmt.Println(token.String())
+	err := app.Run(os.Args)
+	if err != nil {
+		fmt.Println(err)
+	}
 }

@@ -1,0 +1,27 @@
+module rosa
+
+type Maybe[T] = Just T | None
+
+def maybe[T, U](t: T, f: U => T, mu: Maybe[U]) => T = match mu {
+    case Just u => f u
+    case None   => t
+}
+
+def isJust[T](mt: Maybe[T]) => Bool = match mt {
+    case Just t => True
+    case None   => False
+}
+
+def isNone[T](mt: Maybe[T]) => Bool = match mt {
+    case Just t => False
+    case None   => True
+}
+
+def unit[T](t: T) => Maybe[T] = Just t
+
+def bind[T, U](mt: Maybe[T], f: T => Maybe[U]) => Maybe[T] = match mt {
+    Just t => f t
+    None   => None
+}
+
+def >>= = bind

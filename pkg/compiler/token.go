@@ -84,6 +84,9 @@ var (
 	float    = tokenOf(Float)
 	str      = tokenOf(String)
 
+	module       = keyword("module")
+	trait        = keyword("trait")
+	strukt       = keyword("struct")
 	typ          = keyword("type")
 	def          = keyword("def")
 	let          = keyword("let")

@@ -1,1 +1,0 @@
-def x = (Just 0 >>= f) + "Xyz\t\x3"

@@ -20,8 +20,7 @@ type Scanner struct {
 	current     int
 	line        int
 	lastNewline int
-	errors      int
-	warnings    int
+	Logs        []Log
 }
 
 func fileExists(path string) bool {
@@ -65,14 +64,24 @@ func (s *Scanner) Scan() (token Token) {
 	return
 }
 
-func (s *Scanner) error(pos Pos, message string) {
-	s.errors++
-	fmt.Printf("%s:%d:%d: error: %s\n", s.path, pos.Line, pos.Col, message)
+func (s *Scanner) error(pos Pos, message string, args ...interface{}) {
+	message = fmt.Sprintf(message, args...)
+	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
+	s.Logs = append(s.Logs, Log{
+		Level:   LogError,
+		Pos:     pos,
+		Message: message,
+	})
 }
 
-func (s *Scanner) warning(pos Pos, message string) {
-	s.warnings++
-	fmt.Printf("%s:%d:%d: warning: %s\n", s.path, pos.Line, pos.Col, message)
+func (s *Scanner) warning(pos Pos, message string, args ...interface{}) {
+	message = fmt.Sprintf(message, args...)
+	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
+	s.Logs = append(s.Logs, Log{
+		Level:   LogWarning,
+		Pos:     pos,
+		Message: message,
+	})
 }
 
 func (s *Scanner) eof() bool {
@@ -181,6 +190,18 @@ func (s *Scanner) next() (token Token) {
 		token = s.alphaIdent()
 	case s.matchIf(isOpIdentPart):
 		token = s.opIdent()
+	case s.matchIf(isDigit):
+		digit := s.text()[0]
+		if digit == '0' {
+			switch {
+			case s.match('b', 'B'):
+				token = s.number(2, true)
+			case s.match('x', 'X'):
+				token = s.number(16, true)
+			default:
+				token = s.number(10, false)
+			}
+		}
 	default:
 		s.advance()
 		token = Token{
@@ -260,6 +281,46 @@ func (s *Scanner) comment() {
 	}
 }
 
+func (s *Scanner) number(base int, atLeastOne bool) (token Token) {
+	decimal := false
+	if atLeastOne && !s.matchIf(isDigitBase(base)) {
+		s.error(s.pos(), "expected at least one base %d digit after '%s'", base, s.text())
+		token = Token{
+			Type: Error,
+			Pos:  s.pos(),
+			Text: s.text(),
+		}
+		return
+	}
+	for s.matchIf(isDigitBase(base)) {
+		// continue scanning
+	}
+	if base == 10 && s.match('.') {
+		decimal = true
+		// decimal number
+		for s.matchIf(isDigit) {
+			// continue scanning
+		}
+	}
+	if base == 10 && s.match('e', 'E') {
+		// scan exponent
+		s.match('+', '-')
+		for s.matchIf(isDigit) {
+			// continue scanning
+		}
+	}
+	typ := Integer
+	if decimal {
+		typ = Float
+	}
+	token = Token{
+		Type: typ,
+		Pos:  s.pos(),
+		Text: s.text(),
+	}
+	return
+}
+
 func (s *Scanner) alphaIdent() (token Token) {
 	for s.matchIf(isAlphaIdentPart) {
 		// continue scanning
@@ -310,7 +371,6 @@ func (s *Scanner) escape() (seq string) {
 	case s.match('x'):
 		first := s.matchIf(isHex)
 		second := s.matchIf(isHex)
-		println(first, second)
 		if !first || !second {
 			s.error(pos, "malformed hexadecimal escape sequence. Use '\\x1f' for instance.")
 		}
