@@ -20,6 +20,8 @@ type Scanner struct {
 	current     int
 	line        int
 	lastNewline int
+	errors      int
+	warnings    int
 }
 
 func fileExists(path string) bool {
@@ -63,8 +65,14 @@ func (s *Scanner) Scan() (token Token) {
 	return
 }
 
-func (s *Scanner) error(message string) {
-	fmt.Printf("%s:%d:%d: error: %s\n", s.path, s.line, s.col(), message)
+func (s *Scanner) error(pos Pos, message string) {
+	s.errors++
+	fmt.Printf("%s:%d:%d: error: %s\n", s.path, pos.Line, pos.Col, message)
+}
+
+func (s *Scanner) warning(pos Pos, message string) {
+	s.warnings++
+	fmt.Printf("%s:%d:%d: warning: %s\n", s.path, pos.Line, pos.Col, message)
 }
 
 func (s *Scanner) eof() bool {
@@ -213,6 +221,37 @@ func isOpIdentPart(b byte) bool {
 	return strings.IndexByte("@$%<>+-*/:=~#&|^!?", b) > 0
 }
 
+const (
+	digits      = "0123456789abcdefghijklmnopqrstuvwxyz"
+	digitsUpper = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+)
+
+func isDigitBase(base int) func(byte) bool {
+	return func(b byte) bool {
+		index := strings.IndexByte(digits, b)
+		indexUpper := strings.IndexByte(digitsUpper, b)
+		return (index > 0 && index < base) || (indexUpper > 0 && indexUpper < base)
+	}
+}
+
+func digitBaseValue(base int) func(byte) int {
+	return func(b byte) int {
+		var val int
+		if val = strings.IndexByte(digits, b); val == -1 {
+			val = strings.IndexByte(digitsUpper, b)
+		}
+		return val % base
+	}
+}
+
+var (
+	isDigit = isDigitBase(10)
+	isHex   = isDigitBase(16)
+
+	digitValue = digitBaseValue(10)
+	hexValue   = digitBaseValue(16)
+)
+
 ////////////////////////////////////////////////////////////////////////////////
 
 func (s *Scanner) comment() {
@@ -255,15 +294,45 @@ func (s *Scanner) opIdent() (token Token) {
 	return
 }
 
-func (s *Scanner) escape() {
-
+func (s *Scanner) escape() (seq string) {
+	pos := Pos{s.line, s.currentCol() - 2}
+	switch {
+	case s.match('n'):
+		seq = "\n"
+	case s.match('r'):
+		seq = "\r"
+	case s.match('t'):
+		seq = "\t"
+	case s.match('\\'):
+		seq = "\\"
+	case s.match('"'):
+		seq = "\""
+	case s.match('x'):
+		first := s.matchIf(isHex)
+		second := s.matchIf(isHex)
+		println(first, second)
+		if !first || !second {
+			s.error(pos, "malformed hexadecimal escape sequence. Use '\\x1f' for instance.")
+		}
+		text := s.text()
+		val := 16*hexValue(text[len(text)-2]) + hexValue(text[len(text)-1])
+		if val == 0 {
+			s.warning(pos, "null bytes in string literals are ignored")
+			return
+		}
+		seq = string(val)
+	case s.match('0'):
+		s.warning(pos, "null bytes in string literals are ignored")
+	}
+	return
 }
 
 func (s *Scanner) string() (token Token) {
+	var value string
 	for {
 		switch {
 		case s.eof() || s.match('\n'):
-			s.error("unclosed string literal")
+			s.error(s.pos(), "unclosed string literal")
 			token = Token{
 				Type: Error,
 				Pos:  s.pos(),
@@ -271,16 +340,16 @@ func (s *Scanner) string() (token Token) {
 			}
 			return
 		case s.match('\\'):
-			s.escape()
+			value += s.escape()
 		case s.match('"'):
 			token = Token{
 				Type: String,
 				Pos:  s.pos(),
-				Text: string(s.source[s.start+1 : s.current-1]),
+				Text: value,
 			}
 			return
 		default:
-			s.advance()
+			value += string(s.advance())
 		}
 	}
 }
