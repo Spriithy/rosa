@@ -1,15 +1,11 @@
 package compiler
 
-import "strings"
+import (
+	"fmt"
+	"strings"
 
-import "fmt"
-
-////////////////////////////////////////////////////////////////////////////////
-
-type AST interface {
-	Accept(AstPrinter) string
-	ast()
-}
+	"github.com/Spriithy/rosa/pkg/compiler/text"
+)
 
 type Expr interface {
 	expr()
@@ -32,6 +28,18 @@ func (p AstPrinter) parenthesize(name string, asts ...AST) string {
 	return sb.String()
 }
 
+func (p AstPrinter) visitModuleAST(ast *ModuleAST) string {
+	asts := make([]AST, len(ast.Decls))
+	for i := range ast.Decls {
+		asts[i] = ast.Decls[i]
+	}
+	return p.parenthesize("module "+ast.Name+"\n", asts...)
+}
+
+func (p AstPrinter) visitDeclAST(ast *DeclAST) string {
+	return p.parenthesize("decl "+ast.Name, ast.Expr) + "\n"
+}
+
 func (p AstPrinter) visitBinaryExpr(expr *BinaryExpr) string {
 	return p.parenthesize(expr.Op.Text, expr.Left, expr.Right)
 }
@@ -48,12 +56,16 @@ func (p AstPrinter) visitBooleanExpr(expr *BooleanExpr) string {
 	return expr.Token.Text
 }
 
-func (p AstPrinter) visitIntegerExpr(expr *IntegerExpr) string {
-	return expr.Token.Text
+func (p AstPrinter) visitSignedIntegerExpr(expr *SignedIntegerExpr) string {
+	return fmt.Sprintf("%d", expr.Value)
+}
+
+func (p AstPrinter) visitUnsignedIntegerExpr(expr *UnsignedIntegerExpr) string {
+	return fmt.Sprintf("%d", expr.Value)
 }
 
 func (p AstPrinter) visitFloatExpr(expr *FloatExpr) string {
-	return expr.Token.Text
+	return fmt.Sprintf("%f", expr.Value)
 }
 
 func (p AstPrinter) visitStringExpr(expr *StringExpr) string {
@@ -68,7 +80,7 @@ func (p AstPrinter) visitIdentExpr(expr *IdentExpr) string {
 
 type BinaryExpr struct {
 	Left  Expr
-	Op    Token
+	Op    text.Token
 	Right Expr
 }
 
@@ -79,7 +91,7 @@ func (expr *BinaryExpr) Accept(p AstPrinter) string { return p.visitBinaryExpr(e
 ////////////////////////////////////////////////////////////////////////////////
 
 type UnaryExpr struct {
-	Op   Token
+	Op   text.Token
 	Expr Expr
 }
 
@@ -90,9 +102,9 @@ func (expr *UnaryExpr) Accept(p AstPrinter) string { return p.visitUnaryExpr(exp
 ////////////////////////////////////////////////////////////////////////////////
 
 type GroupingExpr struct {
-	Lpar Token
+	Lpar text.Token
 	Expr Expr
-	Rpar Token
+	Rpar text.Token
 }
 
 func (*GroupingExpr) ast()                            {}
@@ -102,7 +114,7 @@ func (expr *GroupingExpr) Accept(p AstPrinter) string { return p.visitGroupingEx
 ////////////////////////////////////////////////////////////////////////////////
 
 type BooleanExpr struct {
-	Token Token
+	Token text.Token
 	Value bool
 }
 
@@ -112,19 +124,30 @@ func (expr *BooleanExpr) Accept(p AstPrinter) string { return p.visitBooleanExpr
 
 ////////////////////////////////////////////////////////////////////////////////
 
-type IntegerExpr struct {
-	Token Token
+type SignedIntegerExpr struct {
+	Token text.Token
+	Value int64
+}
+
+func (*SignedIntegerExpr) ast()                            {}
+func (*SignedIntegerExpr) expr()                           {}
+func (expr *SignedIntegerExpr) Accept(p AstPrinter) string { return p.visitSignedIntegerExpr(expr) }
+
+////////////////////////////////////////////////////////////////////////////////
+
+type UnsignedIntegerExpr struct {
+	Token text.Token
 	Value uint64
 }
 
-func (*IntegerExpr) ast()                            {}
-func (*IntegerExpr) expr()                           {}
-func (expr *IntegerExpr) Accept(p AstPrinter) string { return p.visitIntegerExpr(expr) }
+func (*UnsignedIntegerExpr) ast()                            {}
+func (*UnsignedIntegerExpr) expr()                           {}
+func (expr *UnsignedIntegerExpr) Accept(p AstPrinter) string { return p.visitUnsignedIntegerExpr(expr) }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 type FloatExpr struct {
-	Token Token
+	Token text.Token
 	Value float64
 }
 
@@ -135,7 +158,7 @@ func (expr *FloatExpr) Accept(p AstPrinter) string { return p.visitFloatExpr(exp
 ////////////////////////////////////////////////////////////////////////////////
 
 type StringExpr struct {
-	Token Token
+	Token text.Token
 	Value string
 }
 
@@ -146,7 +169,7 @@ func (expr *StringExpr) Accept(p AstPrinter) string { return p.visitStringExpr(e
 ////////////////////////////////////////////////////////////////////////////////
 
 type IdentExpr struct {
-	Token Token
+	Token text.Token
 	Name  string
 }
 

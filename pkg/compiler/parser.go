@@ -1,15 +1,17 @@
 package compiler
 
-import "strconv"
+import (
+	"errors"
+	"fmt"
+	"strconv"
 
-import "errors"
-
-import "fmt"
+	"github.com/Spriithy/rosa/pkg/compiler/text"
+)
 
 type Parser struct {
 	path    string
 	Scanner *Scanner
-	tokens  *[]Token
+	tokens  *[]text.Token
 	current int
 	Logs    []Log
 }
@@ -19,14 +21,14 @@ func NewParser(path string) *Parser {
 		path:    path,
 		Scanner: NewScanner(path),
 	}
-	for token := p.Scanner.Scan(); !eof(token); token = p.Scanner.Scan() {
+	for token := p.Scanner.Scan(); !text.Eof(token); token = p.Scanner.Scan() {
 		fmt.Println(token.String())
 	}
 	p.tokens = &p.Scanner.tokens
 	return p
 }
 
-func (p *Parser) error(token Token, err error) {
+func (p *Parser) error(token text.Token, err error) {
 	p.Logs = append(p.Logs, Log{
 		Level:   LogError,
 		Message: err.Error(),
@@ -34,7 +36,7 @@ func (p *Parser) error(token Token, err error) {
 	})
 }
 
-func (p *Parser) errorf(token Token, message string, args ...interface{}) {
+func (p *Parser) errorf(token text.Token, message string, args ...interface{}) {
 	p.Logs = append(p.Logs, Log{
 		Level:   LogError,
 		Message: fmt.Sprintf(message, args...),
@@ -45,35 +47,35 @@ func (p *Parser) errorf(token Token, message string, args ...interface{}) {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (p *Parser) eof() bool {
-	return eof((*p.tokens)[len(*p.tokens)-1])
+	return p.current >= len(*p.tokens)
 }
 
-func (p *Parser) peek(n int) Token {
+func (p *Parser) peek(n int) text.Token {
 	if p.current+n >= len(*p.tokens) {
 		return p.previous()
 	}
 	return (*p.tokens)[p.current+n]
 }
 
-func (p *Parser) previous() Token {
+func (p *Parser) previous() text.Token {
 	return p.peek(-1)
 }
 
-func (p *Parser) lookahead() Token {
+func (p *Parser) lookahead() text.Token {
 	if p.eof() {
 		return p.previous()
 	}
 	return p.peek(0)
 }
 
-func (p *Parser) advance() Token {
+func (p *Parser) advance() text.Token {
 	if !p.eof() {
 		p.current++
 	}
 	return p.previous()
 }
 
-func (p *Parser) match(fs ...func(Token) bool) bool {
+func (p *Parser) match(fs ...func(text.Token) bool) bool {
 	if p.eof() {
 		return false
 	}
@@ -86,8 +88,8 @@ func (p *Parser) match(fs ...func(Token) bool) bool {
 	return false
 }
 
-func (p *Parser) expect(fs ...func(Token) bool) func(string) (Token, error) {
-	return func(message string) (token Token, err error) {
+func (p *Parser) expect(fs ...func(text.Token) bool) func(string) (text.Token, error) {
+	return func(message string) (token text.Token, err error) {
 		for _, f := range fs {
 			if f(p.lookahead()) {
 				p.advance()
@@ -106,27 +108,27 @@ func (p *Parser) expect(fs ...func(Token) bool) func(string) (Token, error) {
 func (p *Parser) sync() {
 	p.advance()
 	for !p.eof() {
-		if semicolon(p.previous()) {
+		if text.Semicolon(p.previous()) {
 			return
 		}
 		switch token := p.lookahead(); {
-		case module(token):
+		case text.Module(token):
 			return
-		case importRule(token):
+		case text.Import(token):
 			return
-		case def(token):
+		case text.Def(token):
 			return
-		case strukt(token):
+		case text.Struct(token):
 			return
-		case trait(token):
+		case text.Trait(token):
 			return
-		case let(token):
+		case text.Let(token):
 			return
-		case match(token):
+		case text.Match(token):
 			return
-		case matchCase(token):
+		case text.Case(token):
 			return
-		case ret(token):
+		case text.Return(token):
 			return
 		default:
 			p.advance()
@@ -137,84 +139,73 @@ func (p *Parser) sync() {
 ////////////////////////////////////////////////////////////////////////////////
 
 func (p *Parser) Parse() AST {
-	return p.expr()
+	return p.compilationUnit()
 }
 
-func (p *Parser) expr() Expr {
-	return p.equality()
-}
-
-func (p *Parser) equality() Expr {
-	expr := p.comparison()
-	for p.match(eq, neq) {
-		op := p.previous()
-		right := p.comparison()
-		expr = &BinaryExpr{
-			Left:  expr,
-			Op:    op,
-			Right: right,
+func (p *Parser) compilationUnit() (module *ModuleAST) {
+	if !p.match(text.Module) {
+		p.errorf(p.peek(0), "expected module declaration")
+		return &ModuleAST{
+			Name: "<invalid>",
 		}
 	}
-	return expr
+	moduleToken := p.previous()
+	moduleName, err := p.expect(text.Identifier)("expected module name after 'module' token")
+	if err != nil {
+		p.error(moduleToken, err)
+	}
+	module = &ModuleAST{
+		Tokens: []text.Token{moduleToken, moduleName},
+		Name:   moduleName.Text,
+	}
+	for p.def(module) != nil {
+	}
+	return
 }
 
-func (p *Parser) comparison() Expr {
-	expr := p.additive()
-	for p.match(gt, gte, lt, lte) {
-		op := p.previous()
-		right := p.additive()
-		expr = &BinaryExpr{
-			Left:  expr,
-			Op:    op,
-			Right: right,
+func (p *Parser) def(module *ModuleAST) (decl *DeclAST) {
+	switch {
+	case p.match(text.Def):
+		decl = &DeclAST{}
+		defName, err := p.expect(text.Identifier)("expected identifier")
+		if err != nil {
+			p.error(defName, err)
+			return
 		}
-	}
-	return expr
-}
-
-func (p *Parser) additive() Expr {
-	expr := p.multiplicative()
-	for p.match(plus, minus) {
-		op := p.previous()
-		right := p.multiplicative()
-		expr = &BinaryExpr{
-			Left:  expr,
-			Op:    op,
-			Right: right,
+		decl.Name = defName.Text
+		if p.match(text.Assign) {
+			decl.Expr = p.literal()
+		} else {
+			fmt.Println(p.peek(0))
 		}
+		module.Decls = append(module.Decls, decl)
 	}
-	return expr
-}
-
-func (p *Parser) multiplicative() Expr {
-	expr := p.unary()
-	for p.match(star, div) {
-		op := p.previous()
-		right := p.unary()
-		expr = &BinaryExpr{
-			Left:  expr,
-			Op:    op,
-			Right: right,
-		}
-	}
-	return expr
-}
-
-func (p *Parser) unary() Expr {
-	if p.match(not, lnot, minus) {
-		op := p.previous()
-		expr := p.unary()
-		return &UnaryExpr{
-			Op:   op,
-			Expr: expr,
-		}
-	}
-	return p.literal()
+	return
 }
 
 func (p *Parser) literal() (expr Expr) {
 	switch {
-	case p.match(boolean):
+	case p.match(text.Minus):
+		switch {
+		case p.match(text.Integer):
+			token := p.previous()
+			value, _ := strconv.ParseInt(token.Text, 0, 64)
+			expr = &SignedIntegerExpr{
+				Token: token,
+				Value: -value,
+			}
+		case p.match(text.Float):
+			token := p.previous()
+			value, _ := strconv.ParseFloat(token.Text, 64)
+			expr = &FloatExpr{
+				Token: token,
+				Value: -value,
+			}
+		default:
+			p.errorf(p.lookahead(), "expected integer or float literal, instead found '%s'", p.lookahead().Text)
+		}
+		return
+	case p.match(text.Boolean):
 		token := p.previous()
 		value, _ := strconv.ParseBool(token.Text)
 		expr = &BooleanExpr{
@@ -222,15 +213,15 @@ func (p *Parser) literal() (expr Expr) {
 			Value: value,
 		}
 		return
-	case p.match(integer):
+	case p.match(text.Integer):
 		token := p.previous()
 		value, _ := strconv.ParseUint(token.Text, 0, 64)
-		expr = &IntegerExpr{
+		expr = &UnsignedIntegerExpr{
 			Token: token,
 			Value: value,
 		}
 		return
-	case p.match(float):
+	case p.match(text.Float):
 		token := p.previous()
 		value, _ := strconv.ParseFloat(token.Text, 64)
 		expr = &FloatExpr{
@@ -238,23 +229,10 @@ func (p *Parser) literal() (expr Expr) {
 			Value: value,
 		}
 		return
-	case p.match(str):
+	case p.match(text.String):
 		expr = &StringExpr{
 			Token: p.previous(),
 			Value: p.previous().Text,
-		}
-		return
-	case p.match(lpar):
-		lpar := p.previous()
-		expr = p.expr()
-		rpar, err := p.expect(rpar)("expected closing parenthesis ')' after expression")
-		if err != nil {
-			p.error(rpar, err)
-		}
-		expr = &GroupingExpr{
-			Lpar: lpar,
-			Expr: expr,
-			Rpar: rpar,
 		}
 		return
 	}

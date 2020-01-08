@@ -28,15 +28,15 @@ func buildAction(c *cli.Context) (err error) {
 	}
 
 	file := c.Args().First()
-	/*	p := compiler.NewParser(file)
-		ast := p.Parse()
-		tree := ast.Accept(compiler.AstPrinter{})
-		fmt.Println(tree)*/
-	s := compiler.NewScanner(file)
+	p := compiler.NewParser(file)
+	ast := p.Parse()
+	tree := ast.Accept(compiler.AstPrinter{})
+	fmt.Println(tree)
+	/*s := compiler.NewScanner(file)
 	for token := s.Scan(); token.Type != compiler.EOF; token = s.Scan() {
 		fmt.Println(token.String())
-	}
-	for _, log := range s.Logs {
+	}*/
+	for _, log := range p.Logs {
 		fmt.Println(log.Message)
 	}
 	return

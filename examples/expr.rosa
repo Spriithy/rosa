@@ -1,1 +1,7 @@
-1e-4>>=Mom
+module rosa
+
+def x = 1
+
+def y = -2
+
+def z = 1.3e-4

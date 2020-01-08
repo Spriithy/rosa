@@ -8,17 +8,13 @@ import (
 	"unicode"
 
 	"github.com/Spriithy/rosa/pkg/compiler/fragments"
+	"github.com/Spriithy/rosa/pkg/compiler/text"
 )
-
-type Pos struct {
-	Line int
-	Col  int
-}
 
 type Scanner struct {
 	path        string
 	source      []rune
-	tokens      []Token
+	tokens      []text.Token
 	start       int
 	current     int
 	line        int
@@ -54,10 +50,10 @@ func NewScanner(path string) (scanner *Scanner) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (s *Scanner) Scan() (token Token) {
+func (s *Scanner) Scan() (token text.Token) {
 	if s.eof() {
-		token = Token{
-			Type: EOF,
+		token = text.Token{
+			Type: text.EofType,
 			Pos:  s.currentPos(),
 		}
 		return
@@ -67,7 +63,7 @@ func (s *Scanner) Scan() (token Token) {
 	return
 }
 
-func (s *Scanner) error(pos Pos, message string, args ...interface{}) {
+func (s *Scanner) error(pos text.Pos, message string, args ...interface{}) {
 	message = fmt.Sprintf(message, args...)
 	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
 	s.Logs = append(s.Logs, Log{
@@ -77,7 +73,7 @@ func (s *Scanner) error(pos Pos, message string, args ...interface{}) {
 	})
 }
 
-func (s *Scanner) warning(pos Pos, message string, args ...interface{}) {
+func (s *Scanner) warning(pos text.Pos, message string, args ...interface{}) {
 	message = fmt.Sprintf(message, args...)
 	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
 	s.Logs = append(s.Logs, Log{
@@ -99,15 +95,15 @@ func (s *Scanner) currentCol() int {
 	return s.current - s.lastNewline + 1
 }
 
-func (s *Scanner) pos() Pos {
-	return Pos{
+func (s *Scanner) pos() text.Pos {
+	return text.Pos{
 		Line: s.line,
 		Col:  s.col(),
 	}
 }
 
-func (s *Scanner) currentPos() Pos {
-	return Pos{
+func (s *Scanner) currentPos() text.Pos {
+	return text.Pos{
 		Line: s.line,
 		Col:  s.currentCol(),
 	}
@@ -174,12 +170,16 @@ func (s *Scanner) text() string {
 	return string(s.source[s.start:s.current])
 }
 
-func (s *Scanner) next() (token Token) {
+func (s *Scanner) tokenType() string {
+	return text.TokenType(s.text())
+}
+
+func (s *Scanner) next() (token text.Token) {
 	s.start = s.current // reset token pos
 	switch {
 	case s.eof():
-		token = Token{
-			Type: EOF,
+		token = text.Token{
+			Type: text.EofType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
@@ -191,27 +191,25 @@ func (s *Scanner) next() (token Token) {
 			token = s.next()
 		} else {
 			s.op()
-			text := s.text()
-			token = Token{
-				Type: tokenType(text),
+			token = text.Token{
+				Type: s.tokenType(),
 				Pos:  s.pos(),
-				Text: text,
+				Text: s.text(),
 			}
 		}
 	case s.matchIf(sepChar):
-		token = Token{
-			Type: Separator,
+		token = text.Token{
+			Type: text.SeparatorType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
 	case s.match('"'):
 		token = s.string()
 	case s.op():
-		text := s.text()
-		token = Token{
-			Type: tokenType(text),
+		token = text.Token{
+			Type: s.tokenType(),
 			Pos:  s.pos(),
-			Text: text,
+			Text: s.text(),
 		}
 	case s.matchIf(letter):
 		token = s.varIdent()
@@ -232,16 +230,16 @@ func (s *Scanner) next() (token Token) {
 			s.many(digit)
 			token = s.number()
 		default:
-			token = Token{
-				Type: Integer,
+			token = text.Token{
+				Type: text.IntegerType,
 				Pos:  s.pos(),
 				Text: s.text(),
 			}
 		}
 	default:
 		s.advance()
-		token = Token{
-			Type: Error,
+		token = text.Token{
+			Type: text.ErrorType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
@@ -329,19 +327,18 @@ func (s *Scanner) comment() {
 	}
 }
 
-func (s *Scanner) varIdent() (token Token) {
+func (s *Scanner) varIdent() (token text.Token) {
 	return s.idRest()
 }
 
-func (s *Scanner) idRest() (token Token) {
+func (s *Scanner) idRest() (token text.Token) {
 	s.many(fragments.Or(letter, digit))
 	s.match('_')
 	s.op()
-	text := s.text()
-	token = Token{
-		Type: tokenType(text),
+	token = text.Token{
+		Type: s.tokenType(),
 		Pos:  s.pos(),
-		Text: text,
+		Text: s.text(),
 	}
 	return
 }
@@ -352,39 +349,39 @@ func (s *Scanner) op() (ok bool) {
 	return
 }
 
-func (s *Scanner) base(digits fragments.Fragment, baseName string) (token Token) {
+func (s *Scanner) base(digits fragments.Fragment, baseName string) (token text.Token) {
 	if !s.atLeastOne(digit) {
 		s.error(s.currentPos(), "expected at least one digit in %s integer literal", baseName)
-		token = Token{
-			Type: Integer,
+		token = text.Token{
+			Type: text.IntegerType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
 		return
 	}
-	text := s.text()
-	if offset := strings.IndexFunc(text[2:], fragments.Not(digits)); offset >= 0 {
+	content := s.text()
+	if offset := strings.IndexFunc(content[2:], fragments.Not(digits)); offset >= 0 {
 		pos := s.pos()
 		pos.Col += offset
-		s.error(pos, "unexpected digit in %s literal: '%c'", baseName, text[2:][offset])
+		s.error(pos, "unexpected digit in %s literal: '%c'", baseName, content[2:][offset])
 	}
-	token = Token{
-		Type: Integer,
+	token = text.Token{
+		Type: text.IntegerType,
 		Pos:  s.pos(),
-		Text: text,
+		Text: content,
 	}
 	return
 }
 
-func (s *Scanner) binary() (token Token) {
+func (s *Scanner) binary() (token text.Token) {
 	return s.base(binaryDigit, "binary")
 }
 
-func (s *Scanner) octal() (token Token) {
+func (s *Scanner) octal() (token text.Token) {
 	return s.base(octalDigit, "octal")
 }
 
-func (s *Scanner) hex() (token Token) {
+func (s *Scanner) hex() (token text.Token) {
 	return s.base(hexDigit, "hexadecimal")
 }
 
@@ -393,29 +390,29 @@ func (s *Scanner) tryExponent() bool {
 }
 
 // ('e' | 'E') ('+' | '-')? digit+
-func (s *Scanner) exponent() (token Token) {
+func (s *Scanner) exponent() (token text.Token) {
 	if s.matchIf(exponentChar) {
 		s.match('+', '-') // optional
 		if !s.atLeastOne(digit) {
 			s.error(s.currentPos(), "expected at least one exponent digit in float literal")
-			text := s.text()
-			cut := strings.LastIndexFunc(text, exponentChar)
-			token = Token{
-				Type: Float,
+			content := s.text()
+			cut := strings.LastIndexFunc(content, exponentChar)
+			token = text.Token{
+				Type: text.FloatType,
 				Pos:  s.pos(),
-				Text: text[:cut],
+				Text: content[:cut],
 			}
 			return
 		}
-		token = Token{
-			Type: Float,
+		token = text.Token{
+			Type: text.FloatType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
 		return
 	}
-	token = Token{
-		Type: Float,
+	token = text.Token{
+		Type: text.FloatType,
 		Pos:  s.pos(),
 		Text: s.text(),
 	}
@@ -423,7 +420,7 @@ func (s *Scanner) exponent() (token Token) {
 }
 
 // digit+ exponent?
-func (s *Scanner) decimalPart() (token Token) {
+func (s *Scanner) decimalPart() (token text.Token) {
 	if !s.atLeastOne(digit) {
 		s.error(s.currentPos(), "expected at least one digit after decimal point in float literal")
 	}
@@ -432,15 +429,15 @@ func (s *Scanner) decimalPart() (token Token) {
 }
 
 // digit+ ('.' decimalPart | exponent)?
-func (s *Scanner) number() (token Token) {
+func (s *Scanner) number() (token text.Token) {
 	switch {
 	case s.match('.'):
 		token = s.decimalPart()
 	case s.tryExponent():
 		token = s.exponent()
 	default:
-		token = Token{
-			Type: Integer,
+		token = text.Token{
+			Type: text.IntegerType,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
@@ -449,7 +446,7 @@ func (s *Scanner) number() (token Token) {
 }
 
 func (s *Scanner) escape() (seq string) {
-	pos := Pos{s.line, s.currentCol() - 2}
+	pos := text.Pos{s.line, s.currentCol() - 2}
 	switch {
 	case s.match('n'):
 		seq = "\n"
@@ -480,14 +477,14 @@ func (s *Scanner) escape() (seq string) {
 	return
 }
 
-func (s *Scanner) string() (token Token) {
+func (s *Scanner) string() (token text.Token) {
 	var value string
 	for {
 		switch {
 		case s.eof() || s.match('\n'):
 			s.error(s.pos(), "unclosed string literal")
-			token = Token{
-				Type: Error,
+			token = text.Token{
+				Type: text.ErrorType,
 				Pos:  s.pos(),
 				Text: s.text(),
 			}
@@ -495,8 +492,8 @@ func (s *Scanner) string() (token Token) {
 		case s.match('\\'):
 			value += s.escape()
 		case s.match('"'):
-			token = Token{
-				Type: String,
+			token = text.Token{
+				Type: text.StringType,
 				Pos:  s.pos(),
 				Text: value,
 			}

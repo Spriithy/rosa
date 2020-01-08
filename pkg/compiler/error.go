@@ -1,11 +1,15 @@
 package compiler
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/Spriithy/rosa/pkg/compiler/text"
+)
 
 type Log struct {
 	Level   string
 	Message string
-	Pos     Pos
+	Pos     text.Pos
 }
 
 const (
