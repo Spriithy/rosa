@@ -10,6 +10,7 @@ import (
 
 var (
 	NoInputFileError = errors.New("no input file")
+	ScannerError     = errors.New("an error occured")
 )
 
 func BuildCommand() *cli.Command {
@@ -20,24 +21,23 @@ func BuildCommand() *cli.Command {
 	}
 }
 
-func buildAction(c *cli.Context) error {
+func buildAction(c *cli.Context) (err error) {
 	if !c.Args().Present() {
-		return NoInputFileError
+		err = NoInputFileError
+		return
 	}
 
 	file := c.Args().First()
+	/*	p := compiler.NewParser(file)
+		ast := p.Parse()
+		tree := ast.Accept(compiler.AstPrinter{})
+		fmt.Println(tree)*/
 	s := compiler.NewScanner(file)
-
-	token := s.Scan()
-	for token.Type != compiler.EOF {
+	for token := s.Scan(); token.Type != compiler.EOF; token = s.Scan() {
 		fmt.Println(token.String())
-		token = s.Scan()
 	}
-	fmt.Println(token.String())
-
 	for _, log := range s.Logs {
-		fmt.Printf("%s: %s\n", log.Level, log.Message)
+		fmt.Println(log.Message)
 	}
-
-	return nil
+	return
 }

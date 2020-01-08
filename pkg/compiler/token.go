@@ -85,6 +85,7 @@ var (
 	str      = tokenOf(String)
 
 	module       = keyword("module")
+	importRule   = keyword("import")
 	trait        = keyword("trait")
 	strukt       = keyword("struct")
 	typ          = keyword("type")

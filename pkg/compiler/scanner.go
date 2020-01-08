@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+
+	"github.com/Spriithy/rosa/pkg/compiler/fragments"
 )
 
 type Pos struct {
@@ -14,7 +16,7 @@ type Pos struct {
 
 type Scanner struct {
 	path        string
-	source      []byte
+	source      []rune
 	tokens      []Token
 	start       int
 	current     int
@@ -44,7 +46,7 @@ func NewScanner(path string) (scanner *Scanner) {
 	scanner = &Scanner{
 		path:   path,
 		line:   1,
-		source: source,
+		source: []rune(string(source)),
 	}
 	return
 }
@@ -110,14 +112,14 @@ func (s *Scanner) currentPos() Pos {
 	}
 }
 
-func (s *Scanner) peek() byte {
+func (s *Scanner) peek() rune {
 	if s.eof() {
 		return 0
 	}
 	return s.source[s.current]
 }
 
-func (s *Scanner) advance() byte {
+func (s *Scanner) advance() rune {
 	if s.peek() == '\n' {
 		s.lastNewline = s.current + 1
 		s.line++
@@ -126,12 +128,12 @@ func (s *Scanner) advance() byte {
 	return s.source[s.current-1]
 }
 
-func (s *Scanner) match(expected ...byte) bool {
+func (s *Scanner) match(expected ...rune) bool {
 	if s.eof() {
 		return false
 	}
-	for _, b := range expected {
-		if s.peek() == b {
+	for _, r := range expected {
+		if s.peek() == r {
 			s.advance()
 			return true
 		}
@@ -139,7 +141,7 @@ func (s *Scanner) match(expected ...byte) bool {
 	return false
 }
 
-func (s *Scanner) matchIf(fs ...func(byte) bool) bool {
+func (s *Scanner) matchIf(fs ...fragments.Fragment) bool {
 	if s.eof() {
 		return false
 	}
@@ -148,6 +150,21 @@ func (s *Scanner) matchIf(fs ...func(byte) bool) bool {
 			s.advance()
 			return true
 		}
+	}
+	return false
+}
+
+func (s *Scanner) many(f fragments.Fragment) bool {
+	for s.matchIf(f) {
+	}
+	return true
+}
+
+func (s *Scanner) atLeastOne(f fragments.Fragment) bool {
+	if s.matchIf(f) {
+		for s.matchIf(f) {
+		}
+		return true
 	}
 	return false
 }
@@ -186,20 +203,31 @@ func (s *Scanner) next() (token Token) {
 		}
 	case s.match('"'):
 		token = s.string()
-	case s.matchIf(isAlphaIdentStart):
-		token = s.alphaIdent()
-	case s.matchIf(isOpIdentPart):
+	case s.matchIf(idStart):
+		token = s.plainIdent()
+	case s.matchIf(opChar):
 		token = s.opIdent()
-	case s.matchIf(isDigit):
-		digit := s.text()[0]
-		if digit == '0' {
-			switch {
-			case s.match('b', 'B'):
-				token = s.number(2, true)
-			case s.match('x', 'X'):
-				token = s.number(16, true)
-			default:
-				token = s.number(10, false)
+	case s.atLeastOne(nonZeroDigit):
+		token = s.number()
+	case s.match('0'):
+		switch {
+		case s.match('b', 'B'): // binary literal
+			token = s.binary()
+		case s.match('o', 'O'): // octal literal
+			token = s.octal()
+		case s.match('x', 'X'): // hex literal
+			token = s.hex()
+		case s.match('.'):
+			token = s.decimalPart() // float 0.xxx
+		case s.matchIf(nonZeroDigit):
+			s.error(s.pos(), "numbers should not start with a '0' (use '123' instead of '0123')")
+			s.many(digit)
+			token = s.number()
+		default:
+			token = Token{
+				Type: Integer,
+				Pos:  s.pos(),
+				Text: s.text(),
 			}
 		}
 	default:
@@ -230,30 +258,37 @@ When an expression uses multiple operators, the operators are evaluated based on
 (all letters)
 */
 
-func isAlphaIdentStart(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
-}
-
-func isAlphaIdentPart(b byte) bool {
-	return isAlphaIdentStart(b) || (b >= '0' && b <= '9')
-}
-
-func isOpIdentPart(b byte) bool {
-	return strings.IndexByte("@$%<>+-*/:=~#&|^!?", b) > 0
-}
+var (
+	whiteSpace               = fragments.Any('\u0020', '\u0009', '\u000D', '\u000A')
+	opChar                   = fragments.Any('!', '#', '%', '&', '*', '+', '-', ':', '<', '=', '>', '?', '@', '^', '|', '\\', '~')
+	charNoBackQuoteOrNewline = fragments.Or(
+		fragments.Range('\u0020', '\u0026'),
+		fragments.Range('\u0028', '\u007E'),
+	)
+	nonZeroDigit = fragments.Range('1', '9')
+	digit        = fragments.Range('0', '9')
+	binaryDigit  = fragments.Any('0', '1')
+	octalDigit   = fragments.Range('0', '7')
+	hexDigit     = fragments.Or(
+		fragments.Range('0', '9'),
+		fragments.Range('a', 'f'),
+		fragments.Range('A', 'F'),
+	)
+	exponentChar = fragments.Any('e', 'E')
+	lower        = fragments.Range('a', 'z')
+	upper        = fragments.Or(
+		fragments.Range('A', 'Z'),
+		fragments.Rune('$'),
+		fragments.Rune('_'),
+	)
+	letter  = fragments.Or(lower, upper)
+	idStart = fragments.Or(letter)
+)
 
 const (
 	digits      = "0123456789abcdefghijklmnopqrstuvwxyz"
 	digitsUpper = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 )
-
-func isDigitBase(base int) func(byte) bool {
-	return func(b byte) bool {
-		index := strings.IndexByte(digits, b)
-		indexUpper := strings.IndexByte(digitsUpper, b)
-		return (index > 0 && index < base) || (indexUpper > 0 && indexUpper < base)
-	}
-}
 
 func digitBaseValue(base int) func(byte) int {
 	return func(b byte) int {
@@ -266,11 +301,10 @@ func digitBaseValue(base int) func(byte) int {
 }
 
 var (
-	isDigit = isDigitBase(10)
-	isHex   = isDigitBase(16)
-
-	digitValue = digitBaseValue(10)
-	hexValue   = digitBaseValue(16)
+	binaryValue = digitBaseValue(2)
+	octalValue  = digitBaseValue(8)
+	digitValue  = digitBaseValue(10)
+	hexValue    = digitBaseValue(16)
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -281,10 +315,9 @@ func (s *Scanner) comment() {
 	}
 }
 
-func (s *Scanner) number(base int, atLeastOne bool) (token Token) {
-	decimal := false
-	if atLeastOne && !s.matchIf(isDigitBase(base)) {
-		s.error(s.pos(), "expected at least one base %d digit after '%s'", base, s.text())
+func (s *Scanner) binary() (token Token) {
+	if !s.atLeastOne(binaryDigit) {
+		s.error(s.currentPos(), "expected at least one digit in binary integer literal")
 		token = Token{
 			Type: Error,
 			Pos:  s.pos(),
@@ -292,39 +325,123 @@ func (s *Scanner) number(base int, atLeastOne bool) (token Token) {
 		}
 		return
 	}
-	for s.matchIf(isDigitBase(base)) {
-		// continue scanning
-	}
-	if base == 10 && s.match('.') {
-		decimal = true
-		// decimal number
-		for s.matchIf(isDigit) {
-			// continue scanning
-		}
-	}
-	if base == 10 && s.match('e', 'E') {
-		// scan exponent
-		s.match('+', '-')
-		for s.matchIf(isDigit) {
-			// continue scanning
-		}
-	}
-	typ := Integer
-	if decimal {
-		typ = Float
-	}
 	token = Token{
-		Type: typ,
+		Type: Integer,
 		Pos:  s.pos(),
 		Text: s.text(),
 	}
 	return
 }
 
-func (s *Scanner) alphaIdent() (token Token) {
-	for s.matchIf(isAlphaIdentPart) {
-		// continue scanning
+func (s *Scanner) octal() (token Token) {
+	if !s.atLeastOne(octalDigit) {
+		s.error(s.currentPos(), "expected at least one digit in octal integer literal")
+		token = Token{
+			Type: Error,
+			Pos:  s.pos(),
+			Text: s.text(),
+		}
+		return
 	}
+	token = Token{
+		Type: Integer,
+		Pos:  s.pos(),
+		Text: s.text(),
+	}
+	return
+}
+
+func (s *Scanner) hex() (token Token) {
+	if !s.atLeastOne(hexDigit) {
+		s.error(s.currentPos(), "expected at least one digit in hexadecimal integer literal")
+		token = Token{
+			Type: Error,
+			Pos:  s.pos(),
+			Text: s.text(),
+		}
+		return
+	}
+	token = Token{
+		Type: Integer,
+		Pos:  s.pos(),
+		Text: s.text(),
+	}
+	return
+}
+
+func (s *Scanner) tryExponent() bool {
+	return exponentChar(s.peek())
+}
+
+func (s *Scanner) exponent() (token Token) {
+	if s.matchIf(exponentChar) {
+		s.match('+', '-')
+		if !s.atLeastOne(digit) {
+			s.error(s.currentPos(), "expected at least one exponent digit in float literal")
+			text := s.text()
+			cut := strings.LastIndexFunc(text, exponentChar)
+			token = Token{
+				Type: Float,
+				Pos:  s.pos(),
+				Text: text[:cut],
+			}
+			return
+		}
+		token = Token{
+			Type: Float,
+			Pos:  s.pos(),
+			Text: s.text(),
+		}
+		return
+	}
+	token = Token{
+		Type: Float,
+		Pos:  s.pos(),
+		Text: s.text(),
+	}
+	return
+}
+
+func (s *Scanner) decimalPart() (token Token) {
+	if !s.atLeastOne(digit) {
+		s.error(s.currentPos(), "expected at least one digit after decimal point in float literal")
+	}
+	token = s.exponent()
+	return
+}
+
+func (s *Scanner) number() (token Token) {
+	switch {
+	case s.match('.'):
+		token = s.decimalPart()
+	case s.tryExponent():
+		token = s.exponent()
+	default:
+		token = Token{
+			Type: Integer,
+			Pos:  s.pos(),
+			Text: s.text(),
+		}
+	}
+	return
+}
+
+func (s *Scanner) op() bool {
+	return false
+}
+
+func (s *Scanner) idRest() (bool, string) {
+	s.many(fragments.Or(letter, digit))
+	if s.match('_') {
+		if s.op() {
+			return false, OperatorIdentifier
+		}
+	}
+	return true, Identifier
+}
+
+func (s *Scanner) plainIdent() (token Token) {
+	s.idRest()
 	typ, ident := Identifier, s.text()
 	if exists(keywords)(ident) {
 		typ = Keyword
@@ -338,7 +455,7 @@ func (s *Scanner) alphaIdent() (token Token) {
 }
 
 func (s *Scanner) opIdent() (token Token) {
-	for s.matchIf(isOpIdentPart) {
+	for s.matchIf(opChar) {
 		// continue scanning
 	}
 	typ, ident := OperatorIdentifier, s.text()
@@ -369,8 +486,8 @@ func (s *Scanner) escape() (seq string) {
 	case s.match('"'):
 		seq = "\""
 	case s.match('x'):
-		first := s.matchIf(isHex)
-		second := s.matchIf(isHex)
+		first := s.matchIf(hexDigit)
+		second := s.matchIf(hexDigit)
 		if !first || !second {
 			s.error(pos, "malformed hexadecimal escape sequence. Use '\\x1f' for instance.")
 		}
