@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Spriithy/rosa/pkg/compiler"
+	"github.com/Spriithy/rosa/pkg/compiler/ast"
 	"github.com/urfave/cli"
 )
 
@@ -29,8 +30,8 @@ func buildAction(c *cli.Context) (err error) {
 
 	file := c.Args().First()
 	p := compiler.NewParser(file)
-	ast := p.Parse()
-	tree := ast.Accept(compiler.AstPrinter{})
+	result := p.Parse()
+	tree := result.Accept(ast.AstPrinter{})
 	fmt.Println(tree)
 	/*s := compiler.NewScanner(file)
 	for token := s.Scan(); token.Type != compiler.EOF; token = s.Scan() {

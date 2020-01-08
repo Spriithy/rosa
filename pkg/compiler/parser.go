@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/Spriithy/rosa/pkg/compiler/ast"
 	"github.com/Spriithy/rosa/pkg/compiler/text"
 )
 
@@ -138,14 +139,14 @@ func (p *Parser) sync() {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (p *Parser) Parse() AST {
+func (p *Parser) Parse() ast.AST {
 	return p.compilationUnit()
 }
 
-func (p *Parser) compilationUnit() (module *ModuleAST) {
+func (p *Parser) compilationUnit() (module *ast.ModuleAST) {
 	if !p.match(text.Module) {
 		p.errorf(p.peek(0), "expected module declaration")
-		return &ModuleAST{
+		return &ast.ModuleAST{
 			Name: "<invalid>",
 		}
 	}
@@ -154,7 +155,7 @@ func (p *Parser) compilationUnit() (module *ModuleAST) {
 	if err != nil {
 		p.error(moduleToken, err)
 	}
-	module = &ModuleAST{
+	module = &ast.ModuleAST{
 		Tokens: []text.Token{moduleToken, moduleName},
 		Name:   moduleName.Text,
 	}
@@ -163,10 +164,10 @@ func (p *Parser) compilationUnit() (module *ModuleAST) {
 	return
 }
 
-func (p *Parser) def(module *ModuleAST) (decl *DeclAST) {
+func (p *Parser) def(module *ast.ModuleAST) (decl *ast.DeclAST) {
 	switch {
 	case p.match(text.Def):
-		decl = &DeclAST{}
+		decl = &ast.DeclAST{}
 		defName, err := p.expect(text.Identifier)("expected identifier")
 		if err != nil {
 			p.error(defName, err)
@@ -183,21 +184,21 @@ func (p *Parser) def(module *ModuleAST) (decl *DeclAST) {
 	return
 }
 
-func (p *Parser) literal() (expr Expr) {
+func (p *Parser) literal() (expr ast.Expr) {
 	switch {
 	case p.match(text.Minus):
 		switch {
 		case p.match(text.Integer):
 			token := p.previous()
 			value, _ := strconv.ParseInt(token.Text, 0, 64)
-			expr = &SignedIntegerExpr{
+			expr = &ast.SignedIntegerExpr{
 				Token: token,
 				Value: -value,
 			}
 		case p.match(text.Float):
 			token := p.previous()
 			value, _ := strconv.ParseFloat(token.Text, 64)
-			expr = &FloatExpr{
+			expr = &ast.FloatExpr{
 				Token: token,
 				Value: -value,
 			}
@@ -208,7 +209,7 @@ func (p *Parser) literal() (expr Expr) {
 	case p.match(text.Boolean):
 		token := p.previous()
 		value, _ := strconv.ParseBool(token.Text)
-		expr = &BooleanExpr{
+		expr = &ast.BooleanExpr{
 			Token: token,
 			Value: value,
 		}
@@ -216,7 +217,7 @@ func (p *Parser) literal() (expr Expr) {
 	case p.match(text.Integer):
 		token := p.previous()
 		value, _ := strconv.ParseUint(token.Text, 0, 64)
-		expr = &UnsignedIntegerExpr{
+		expr = &ast.UnsignedIntegerExpr{
 			Token: token,
 			Value: value,
 		}
@@ -224,13 +225,13 @@ func (p *Parser) literal() (expr Expr) {
 	case p.match(text.Float):
 		token := p.previous()
 		value, _ := strconv.ParseFloat(token.Text, 64)
-		expr = &FloatExpr{
+		expr = &ast.FloatExpr{
 			Token: token,
 			Value: value,
 		}
 		return
 	case p.match(text.String):
-		expr = &StringExpr{
+		expr = &ast.StringExpr{
 			Token: p.previous(),
 			Value: p.previous().Text,
 		}
