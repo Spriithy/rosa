@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"unicode"
 
 	"github.com/Spriithy/rosa/pkg/compiler/fragments"
 )
@@ -182,20 +183,22 @@ func (s *Scanner) next() (token Token) {
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
-	case s.match(' ', '\n', '\r', '\t'):
+	case s.matchIf(unicode.IsSpace):
 		token = s.next()
 	case s.match('/'):
 		if s.match('/') {
 			s.comment()
 			token = s.next()
 		} else {
+			s.op()
+			text := s.text()
 			token = Token{
-				Type: Identifier,
+				Type: tokenType(text),
 				Pos:  s.pos(),
-				Text: s.text(),
+				Text: text,
 			}
 		}
-	case s.match('(', ')', '[', ']', '{', '}', ',', ';'):
+	case s.matchIf(sepChar):
 		token = Token{
 			Type: Separator,
 			Pos:  s.pos(),
@@ -203,10 +206,15 @@ func (s *Scanner) next() (token Token) {
 		}
 	case s.match('"'):
 		token = s.string()
-	case s.matchIf(idStart):
-		token = s.plainIdent()
-	case s.matchIf(opChar):
-		token = s.opIdent()
+	case s.op():
+		text := s.text()
+		token = Token{
+			Type: tokenType(text),
+			Pos:  s.pos(),
+			Text: text,
+		}
+	case s.matchIf(letter):
+		token = s.varIdent()
 	case s.atLeastOne(nonZeroDigit):
 		token = s.number()
 	case s.match('0'):
@@ -259,12 +267,12 @@ When an expression uses multiple operators, the operators are evaluated based on
 */
 
 var (
-	whiteSpace               = fragments.Any('\u0020', '\u0009', '\u000D', '\u000A')
-	opChar                   = fragments.Any('!', '#', '%', '&', '*', '+', '-', ':', '<', '=', '>', '?', '@', '^', '|', '\\', '~')
 	charNoBackQuoteOrNewline = fragments.Or(
 		fragments.Range('\u0020', '\u0026'),
 		fragments.Range('\u0028', '\u007E'),
 	)
+	sepChar      = fragments.Any('(', ')', '[', ']', '{', '}', '.', ',', ';')
+	opChar       = fragments.Any('!', '#', '%', '&', '*', '+', '-', ':', '<', '=', '>', '?', '@', '^', '|', '\\', '~', '$')
 	nonZeroDigit = fragments.Range('1', '9')
 	digit        = fragments.Range('0', '9')
 	binaryDigit  = fragments.Any('0', '1')
@@ -275,14 +283,20 @@ var (
 		fragments.Range('A', 'F'),
 	)
 	exponentChar = fragments.Any('e', 'E')
-	lower        = fragments.Range('a', 'z')
-	upper        = fragments.Or(
+	lower        = fragments.Or(
+		fragments.Range('a', 'z'),
+		fragments.In(unicode.Ll),
+	)
+	upper = fragments.Or(
 		fragments.Range('A', 'Z'),
 		fragments.Rune('$'),
-		fragments.Rune('_'),
+		fragments.In(unicode.Lu),
 	)
-	letter  = fragments.Or(lower, upper)
-	idStart = fragments.Or(letter)
+	letter = fragments.Or(
+		lower, upper,
+		fragments.In(unicode.Lo),
+		fragments.In(unicode.Lt),
+	)
 )
 
 const (
@@ -315,67 +329,73 @@ func (s *Scanner) comment() {
 	}
 }
 
-func (s *Scanner) binary() (token Token) {
-	if !s.atLeastOne(binaryDigit) {
-		s.error(s.currentPos(), "expected at least one digit in binary integer literal")
+func (s *Scanner) varIdent() (token Token) {
+	return s.idRest()
+}
+
+func (s *Scanner) idRest() (token Token) {
+	s.many(fragments.Or(letter, digit))
+	s.match('_')
+	s.op()
+	text := s.text()
+	token = Token{
+		Type: tokenType(text),
+		Pos:  s.pos(),
+		Text: text,
+	}
+	return
+}
+
+func (s *Scanner) op() (ok bool) {
+	ok = s.match('/')
+	ok = s.atLeastOne(opChar) || ok
+	return
+}
+
+func (s *Scanner) base(digits fragments.Fragment, baseName string) (token Token) {
+	if !s.atLeastOne(digit) {
+		s.error(s.currentPos(), "expected at least one digit in %s integer literal", baseName)
 		token = Token{
-			Type: Error,
+			Type: Integer,
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
 		return
 	}
+	text := s.text()
+	if offset := strings.IndexFunc(text[2:], fragments.Not(digits)); offset >= 0 {
+		pos := s.pos()
+		pos.Col += offset
+		s.error(pos, "unexpected digit in %s literal: '%c'", baseName, text[2:][offset])
+	}
 	token = Token{
 		Type: Integer,
 		Pos:  s.pos(),
-		Text: s.text(),
+		Text: text,
 	}
 	return
+}
+
+func (s *Scanner) binary() (token Token) {
+	return s.base(binaryDigit, "binary")
 }
 
 func (s *Scanner) octal() (token Token) {
-	if !s.atLeastOne(octalDigit) {
-		s.error(s.currentPos(), "expected at least one digit in octal integer literal")
-		token = Token{
-			Type: Error,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-		return
-	}
-	token = Token{
-		Type: Integer,
-		Pos:  s.pos(),
-		Text: s.text(),
-	}
-	return
+	return s.base(octalDigit, "octal")
 }
 
 func (s *Scanner) hex() (token Token) {
-	if !s.atLeastOne(hexDigit) {
-		s.error(s.currentPos(), "expected at least one digit in hexadecimal integer literal")
-		token = Token{
-			Type: Error,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-		return
-	}
-	token = Token{
-		Type: Integer,
-		Pos:  s.pos(),
-		Text: s.text(),
-	}
-	return
+	return s.base(hexDigit, "hexadecimal")
 }
 
 func (s *Scanner) tryExponent() bool {
 	return exponentChar(s.peek())
 }
 
+// ('e' | 'E') ('+' | '-')? digit+
 func (s *Scanner) exponent() (token Token) {
 	if s.matchIf(exponentChar) {
-		s.match('+', '-')
+		s.match('+', '-') // optional
 		if !s.atLeastOne(digit) {
 			s.error(s.currentPos(), "expected at least one exponent digit in float literal")
 			text := s.text()
@@ -402,6 +422,7 @@ func (s *Scanner) exponent() (token Token) {
 	return
 }
 
+// digit+ exponent?
 func (s *Scanner) decimalPart() (token Token) {
 	if !s.atLeastOne(digit) {
 		s.error(s.currentPos(), "expected at least one digit after decimal point in float literal")
@@ -410,6 +431,7 @@ func (s *Scanner) decimalPart() (token Token) {
 	return
 }
 
+// digit+ ('.' decimalPart | exponent)?
 func (s *Scanner) number() (token Token) {
 	switch {
 	case s.match('.'):
@@ -422,52 +444,6 @@ func (s *Scanner) number() (token Token) {
 			Pos:  s.pos(),
 			Text: s.text(),
 		}
-	}
-	return
-}
-
-func (s *Scanner) op() bool {
-	return false
-}
-
-func (s *Scanner) idRest() (bool, string) {
-	s.many(fragments.Or(letter, digit))
-	if s.match('_') {
-		if s.op() {
-			return false, OperatorIdentifier
-		}
-	}
-	return true, Identifier
-}
-
-func (s *Scanner) plainIdent() (token Token) {
-	s.idRest()
-	typ, ident := Identifier, s.text()
-	if exists(keywords)(ident) {
-		typ = Keyword
-	}
-	token = Token{
-		Type: typ,
-		Pos:  s.pos(),
-		Text: s.text(),
-	}
-	return
-}
-
-func (s *Scanner) opIdent() (token Token) {
-	for s.matchIf(opChar) {
-		// continue scanning
-	}
-	typ, ident := OperatorIdentifier, s.text()
-	if exists(operators)(ident) {
-		typ = Operator
-	} else if exists(separators)(ident) {
-		typ = Separator
-	}
-	token = Token{
-		Type: typ,
-		Pos:  s.pos(),
-		Text: s.text(),
 	}
 	return
 }

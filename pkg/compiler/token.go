@@ -13,16 +13,15 @@ func (t Token) String() string {
 }
 
 const (
-	Error              = "ERROR"
-	EOF                = "EOF"
-	Identifier         = "IDENTIFIER"
-	OperatorIdentifier = "OPERATOR_IDENTIFIER"
-	Keyword            = "KEYWORD"
-	Integer            = "INTEGER"
-	Float              = "FLOAT"
-	String             = "STRING"
-	Separator          = "SEPARATOR"
-	Operator           = "OPERATOR"
+	Error      = "ERROR"
+	EOF        = "EOF"
+	Identifier = "IDENTIFIER"
+	Keyword    = "KEYWORD"
+	Integer    = "INTEGER"
+	Float      = "FLOAT"
+	String     = "STRING"
+	Separator  = "SEPARATOR"
+	Operator   = "OPERATOR"
 )
 
 func tokenOf(typ string) func(Token) bool {
@@ -34,17 +33,17 @@ func typedText(typ string, text string) func(Token) bool {
 }
 
 func sep(sep string) func(Token) bool {
-	separators = append(separators, sep)
+	separators[sep] = true
 	return typedText(Separator, sep)
 }
 
 func op(op string) func(Token) bool {
-	operators = append(operators, op)
+	operators[op] = true
 	return typedText(Operator, op)
 }
 
 func keyword(keyword string) func(Token) bool {
-	keywords = append(keywords, keyword)
+	keywords[keyword] = true
 	return typedText(Keyword, keyword)
 }
 
@@ -59,30 +58,32 @@ func anyOf(fs ...func(Token) bool) func(Token) bool {
 	}
 }
 
-func exists(strs []string) func(string) bool {
-	return func(str string) bool {
-		for _, s := range strs {
-			if s == str {
-				return true
-			}
-		}
-		return false
+var (
+	keywords   = map[string]bool{}
+	separators = map[string]bool{}
+	operators  = map[string]bool{}
+)
+
+func tokenType(str string) (typ string) {
+	switch {
+	case keywords[str]:
+		typ = Keyword
+	case separators[str]:
+		typ = Separator
+	case operators[str]:
+		typ = Operator
+	default:
+		typ = Identifier
 	}
+	return
 }
 
 var (
-	keywords   []string
-	separators []string
-	operators  []string
-)
-
-var (
-	eof      = tokenOf(EOF)
-	ident    = tokenOf(Identifier)
-	opIndent = tokenOf(OperatorIdentifier)
-	integer  = tokenOf(Integer)
-	float    = tokenOf(Float)
-	str      = tokenOf(String)
+	eof     = tokenOf(EOF)
+	ident   = tokenOf(Identifier)
+	integer = tokenOf(Integer)
+	float   = tokenOf(Float)
+	str     = tokenOf(String)
 
 	module       = keyword("module")
 	importRule   = keyword("import")
