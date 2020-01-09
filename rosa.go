@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/Spriithy/rosa/commands"
 	"github.com/urfave/cli"
-	"os"
 )
 
 func main() {

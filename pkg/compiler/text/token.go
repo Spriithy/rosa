@@ -1,6 +1,8 @@
 package text
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type Pos struct {
 	Line int
@@ -14,12 +16,12 @@ type Token struct {
 }
 
 func (t Token) String() string {
-	return fmt.Sprintf("Token{(%d,%d), %s, '%s'}", t.Line, t.Col, t.Type, t.Text)
+	return fmt.Sprintf("Token{(%d,%d), %s, %q}", t.Line, t.Col, t.Type, t.Text)
 }
 
 const (
 	ErrorType      = "ERROR"
-	EofType        = "EOF"
+	EOF            = "EOF"
 	IdentifierType = "IDENTIFIER"
 	KeywordType    = "KEYWORD"
 	IntegerType    = "INTEGER"
@@ -84,7 +86,7 @@ func TokenType(str string) (typ string) {
 }
 
 var (
-	Eof        = tokenOf(EofType)
+	Eof        = tokenOf(EOF)
 	Identifier = tokenOf(IdentifierType)
 	Integer    = tokenOf(IntegerType)
 	Float      = tokenOf(FloatType)

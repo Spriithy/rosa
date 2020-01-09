@@ -15,16 +15,22 @@ func Not(f Fragment) Fragment {
 	return func(r rune) bool { return !f(r) }
 }
 
-func In(table *unicode.RangeTable) Fragment {
-	return func(r rune) bool { return unicode.Is(table, r) }
+func In(tables ...*unicode.RangeTable) Fragment {
+	return func(r rune) bool { return unicode.In(r, tables...) }
 }
 
 func Any(runes ...rune) Fragment {
-	return AnyString(string(runes))
+	var runeMap = map[rune]bool{}
+	for _, r := range runes {
+		runeMap[r] = true
+	}
+	return func(r rune) bool {
+		return runeMap[r]
+	}
 }
 
 func AnyString(str string) Fragment {
-	return func(r rune) bool { return strings.IndexRune(str, r) >= 0 }
+	return Any([]rune(str)...)
 }
 
 func Except(runes ...rune) Fragment {

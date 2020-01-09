@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
-	"unicode"
 
 	"github.com/Spriithy/rosa/pkg/compiler/fragments"
 	"github.com/Spriithy/rosa/pkg/compiler/text"
@@ -20,6 +19,9 @@ type Scanner struct {
 	line        int
 	lastNewline int
 	Logs        []Log
+
+	openComments int
+	tokenData    strings.Builder
 }
 
 func fileExists(path string) bool {
@@ -53,7 +55,7 @@ func NewScanner(path string) (scanner *Scanner) {
 func (s *Scanner) Scan() (token text.Token) {
 	if s.eof() {
 		token = text.Token{
-			Type: text.EofType,
+			Type: text.EOF,
 			Pos:  s.currentPos(),
 		}
 		return
@@ -64,22 +66,20 @@ func (s *Scanner) Scan() (token text.Token) {
 }
 
 func (s *Scanner) error(pos text.Pos, message string, args ...interface{}) {
-	message = fmt.Sprintf(message, args...)
-	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
 	s.Logs = append(s.Logs, Log{
+		Path:    s.path,
 		Level:   LogError,
 		Pos:     pos,
-		Message: message,
+		Message: fmt.Sprintf(message, args...),
 	})
 }
 
-func (s *Scanner) warning(pos text.Pos, message string, args ...interface{}) {
-	message = fmt.Sprintf(message, args...)
-	message = fmt.Sprintf("%s:%d:%d: %s", s.path, pos.Line, pos.Col, message)
+func (s *Scanner) syntaxError(pos text.Pos, message string, args ...interface{}) {
 	s.Logs = append(s.Logs, Log{
-		Level:   LogWarning,
+		Path:    s.path,
+		Level:   LogSyntaxError,
 		Pos:     pos,
-		Message: message,
+		Message: fmt.Sprintf(message, args...),
 	})
 }
 
@@ -111,7 +111,7 @@ func (s *Scanner) currentPos() text.Pos {
 
 func (s *Scanner) peek() rune {
 	if s.eof() {
-		return 0
+		return text.SU
 	}
 	return s.source[s.current]
 }
@@ -121,11 +121,20 @@ func (s *Scanner) advance() rune {
 		s.lastNewline = s.current + 1
 		s.line++
 	}
+	s.ingest(s.source[s.current])
 	s.current++
 	return s.source[s.current-1]
 }
 
-func (s *Scanner) match(expected ...rune) bool {
+func (s *Scanner) skipRune() {
+	if s.peek() == '\n' {
+		s.lastNewline = s.current + 1
+		s.line++
+	}
+	s.current++
+}
+
+func (s *Scanner) accept(expected ...rune) bool {
 	if s.eof() {
 		return false
 	}
@@ -138,7 +147,7 @@ func (s *Scanner) match(expected ...rune) bool {
 	return false
 }
 
-func (s *Scanner) matchIf(fs ...fragments.Fragment) bool {
+func (s *Scanner) acceptIf(fs ...fragments.Fragment) bool {
 	if s.eof() {
 		return false
 	}
@@ -151,15 +160,39 @@ func (s *Scanner) matchIf(fs ...fragments.Fragment) bool {
 	return false
 }
 
+func (s *Scanner) match(accepted ...rune) bool {
+	if s.eof() {
+		return false
+	}
+	for _, r := range accepted {
+		if s.peek() == r {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scanner) matchIf(fs ...fragments.Fragment) bool {
+	if s.eof() {
+		return false
+	}
+	for _, f := range fs {
+		if f(s.peek()) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Scanner) many(f fragments.Fragment) bool {
-	for s.matchIf(f) {
+	for s.acceptIf(f) {
 	}
 	return true
 }
 
 func (s *Scanner) atLeastOne(f fragments.Fragment) bool {
-	if s.matchIf(f) {
-		for s.matchIf(f) {
+	if s.acceptIf(f) {
+		for s.acceptIf(f) {
 		}
 		return true
 	}
@@ -170,80 +203,96 @@ func (s *Scanner) text() string {
 	return string(s.source[s.start:s.current])
 }
 
+func (s *Scanner) data() string {
+	return s.tokenData.String()
+}
+
+func (s *Scanner) ingest(r rune) {
+	s.tokenData.WriteRune(r)
+}
+
 func (s *Scanner) tokenType() string {
-	return text.TokenType(s.text())
+	return text.TokenType(s.data())
+}
+
+func (s *Scanner) wrapToken() text.Token {
+	return text.Token{
+		Text: s.data(),
+		Type: s.tokenType(),
+		Pos:  s.pos(),
+	}
+}
+
+func (s *Scanner) wrapTokenAs(typ string) text.Token {
+	return text.Token{
+		Text: s.data(),
+		Type: typ,
+		Pos:  s.pos(),
+	}
+}
+
+func (s *Scanner) wrapTokenWith(typ, data string) text.Token {
+	return text.Token{
+		Text: data,
+		Type: typ,
+		Pos:  s.pos(),
+	}
 }
 
 func (s *Scanner) next() (token text.Token) {
 	s.start = s.current // reset token pos
 	switch {
 	case s.eof():
-		token = text.Token{
-			Type: text.EofType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-	case s.matchIf(unicode.IsSpace):
+		token = s.wrapTokenWith(text.EOF, s.text())
+	case s.match(' ', '\t', text.CR, text.LF, text.FF):
+		s.skipRune()
 		token = s.next()
+	case s.acceptIf(text.IdentStart):
+		s.identRest()
+		token = s.wrapToken()
 	case s.match('/'):
-		if s.match('/') {
-			s.comment()
+		s.skipRune()
+		if s.skipComment() {
 			token = s.next()
 		} else {
-			s.op()
-			token = text.Token{
-				Type: s.tokenType(),
-				Pos:  s.pos(),
-				Text: s.text(),
-			}
+			s.ingest('/')
+			s.operatorRest()
+			token = s.wrapToken()
 		}
-	case s.matchIf(sepChar):
-		token = text.Token{
-			Type: text.SeparatorType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-	case s.match('"'):
-		token = s.string()
-	case s.op():
-		token = text.Token{
-			Type: s.tokenType(),
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-	case s.matchIf(letter):
-		token = s.varIdent()
-	case s.atLeastOne(nonZeroDigit):
-		token = s.number()
-	case s.match('0'):
+	case s.acceptIf(text.IsOperatorPart):
+		s.operatorRest()
+		token = s.wrapToken()
+	case s.accept('0'):
 		switch {
-		case s.match('b', 'B'): // binary literal
+		case s.accept('b', 'B'):
 			token = s.binary()
-		case s.match('o', 'O'): // octal literal
-			token = s.octal()
-		case s.match('x', 'X'): // hex literal
-			token = s.hex()
-		case s.match('.'):
-			token = s.decimalPart() // float 0.xxx
-		case s.matchIf(nonZeroDigit):
-			s.error(s.pos(), "numbers should not start with a '0' (use '123' instead of '0123')")
-			s.many(digit)
-			token = s.number()
+		case s.accept('x', 'X'):
+			token = s.hexadecimal()
 		default:
-			token = text.Token{
-				Type: text.IntegerType,
-				Pos:  s.pos(),
-				Text: s.text(),
-			}
+			token = s.number()
 		}
+		s.number()
+		token = s.wrapTokenAs(text.IntegerType)
+	case s.acceptIf(text.NonZeroDigit):
+		token = s.number()
+	case s.acceptIf(text.IsSeparator):
+		token = s.wrapTokenAs(text.SeparatorType)
+	case s.match('"'):
+		s.skipRune()
+		if s.match('"') {
+			s.skipRune()
+			if s.match('"') {
+				// s.rawString()
+			}
+		} else {
+			s.string()
+		}
+		token = s.wrapTokenAs(text.StringType)
 	default:
 		s.advance()
-		token = text.Token{
-			Type: text.ErrorType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
+		token = s.wrapTokenWith(text.ErrorType, s.text())
 	}
+	s.tokenData.Reset()
 	return
 }
 
@@ -264,242 +313,248 @@ When an expression uses multiple operators, the operators are evaluated based on
 (all letters)
 */
 
-var (
-	charNoBackQuoteOrNewline = fragments.Or(
-		fragments.Range('\u0020', '\u0026'),
-		fragments.Range('\u0028', '\u007E'),
-	)
-	sepChar      = fragments.Any('(', ')', '[', ']', '{', '}', '.', ',', ';')
-	opChar       = fragments.Any('!', '#', '%', '&', '*', '+', '-', ':', '<', '=', '>', '?', '@', '^', '|', '\\', '~', '$')
-	nonZeroDigit = fragments.Range('1', '9')
-	digit        = fragments.Range('0', '9')
-	binaryDigit  = fragments.Any('0', '1')
-	octalDigit   = fragments.Range('0', '7')
-	hexDigit     = fragments.Or(
-		fragments.Range('0', '9'),
-		fragments.Range('a', 'f'),
-		fragments.Range('A', 'F'),
-	)
-	exponentChar = fragments.Any('e', 'E')
-	lower        = fragments.Or(
-		fragments.Range('a', 'z'),
-		fragments.In(unicode.Ll),
-	)
-	upper = fragments.Or(
-		fragments.Range('A', 'Z'),
-		fragments.Rune('$'),
-		fragments.In(unicode.Lu),
-	)
-	letter = fragments.Or(
-		lower, upper,
-		fragments.In(unicode.Lo),
-		fragments.In(unicode.Lt),
-	)
-)
+////////////////////////////////////////////////////////////////////////////////
+// Comments
 
-const (
-	digits      = "0123456789abcdefghijklmnopqrstuvwxyz"
-	digitsUpper = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-)
+func (s *Scanner) skipComment() bool {
+	switch ch := s.peek(); {
+	case s.match('/', '*'):
+		s.skipRune()
+		s.skipCommentToEnd(ch == '/')
+		return true
+	}
+	return false
+}
 
-func digitBaseValue(base int) func(byte) int {
-	return func(b byte) int {
-		var val int
-		if val = strings.IndexByte(digits, b); val == -1 {
-			val = strings.IndexByte(digitsUpper, b)
-		}
-		return val % base
+func (s *Scanner) skipCommentToEnd(isLineComment bool) {
+	if isLineComment {
+		s.skipLineComment()
+	} else {
+		s.openComments = 1
+		s.skipNestedComments()
 	}
 }
 
-var (
-	binaryValue = digitBaseValue(2)
-	octalValue  = digitBaseValue(8)
-	digitValue  = digitBaseValue(10)
-	hexValue    = digitBaseValue(16)
-)
+func (s *Scanner) skipLineComment() {
+	for !s.match(text.SU, text.CR, text.LF) {
+		s.skipRune()
+	}
+}
+
+func (s *Scanner) skipNestedComments() {
+	switch s.peek() {
+	case '/':
+		s.maybeOpen()
+		s.skipNestedComments()
+	case '*':
+		if !s.maybeClose() {
+			s.skipNestedComments()
+		}
+	case text.SU:
+		s.error(s.currentPos(), "unclosed multiline comment")
+	default:
+		s.skipRune()
+		s.skipNestedComments()
+	}
+}
+
+func (s *Scanner) maybeOpen() {
+	s.skipRune()
+	if s.match('*') {
+		s.skipRune()
+		s.openComments++
+	}
+}
+
+func (s *Scanner) maybeClose() bool {
+	s.skipRune()
+	if s.match('/') {
+		s.skipRune()
+		s.openComments--
+	}
+	return s.openComments == 0
+}
 
 ////////////////////////////////////////////////////////////////////////////////
+// Identifiers & Operators
 
-func (s *Scanner) comment() {
-	for s.peek() != '\n' && !s.eof() {
-		s.advance()
+func (s *Scanner) identRest() {
+	switch {
+	case s.acceptIf(text.IdentRest):
+		s.identRest()
+	case s.accept('_'):
+		s.identOrOperatorRest()
+	case s.acceptIf(text.IsIdentifierPart):
+		s.identRest()
 	}
 }
 
-func (s *Scanner) varIdent() (token text.Token) {
-	return s.idRest()
-}
-
-func (s *Scanner) idRest() (token text.Token) {
-	s.many(fragments.Or(letter, digit))
-	s.match('_')
-	s.op()
-	token = text.Token{
-		Type: s.tokenType(),
-		Pos:  s.pos(),
-		Text: s.text(),
+func (s *Scanner) identOrOperatorRest() {
+	switch {
+	case s.matchIf(text.IsIdentifierPart):
+		s.identRest()
+	case s.matchIf(text.IsOperatorPart):
+		s.operatorRest()
 	}
-	return
 }
 
-func (s *Scanner) op() (ok bool) {
-	ok = s.match('/')
-	ok = s.atLeastOne(opChar) || ok
-	return
+func (s *Scanner) operatorRest() {
+	switch {
+	case s.accept('/'):
+		if !s.skipComment() {
+			s.ingest('/')
+		}
+	case s.acceptIf(text.IsOperatorPart):
+		s.operatorRest()
+	case s.acceptIf(text.IsSpecial):
+		s.operatorRest()
+	}
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Numbers
 
 func (s *Scanner) base(digits fragments.Fragment, baseName string) (token text.Token) {
-	if !s.atLeastOne(digit) {
-		s.error(s.currentPos(), "expected at least one digit in %s integer literal", baseName)
-		token = text.Token{
-			Type: text.IntegerType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
+	if !s.atLeastOne(text.Digit) {
+		s.syntaxError(s.currentPos(), "expected at least one digit in %s integer literal", baseName)
+		token = s.wrapTokenAs(text.IntegerType)
 		return
 	}
 	content := s.text()
 	if offset := strings.IndexFunc(content[2:], fragments.Not(digits)); offset >= 0 {
 		pos := s.pos()
 		pos.Col += offset
-		s.error(pos, "unexpected digit in %s literal: '%c'", baseName, content[2:][offset])
+		s.syntaxError(pos, "unexpected digit in %s literal: '%c'", baseName, content[2:][offset])
 	}
-	token = text.Token{
-		Type: text.IntegerType,
-		Pos:  s.pos(),
-		Text: content,
-	}
+	token = s.wrapTokenAs(text.IntegerType)
 	return
 }
 
 func (s *Scanner) binary() (token text.Token) {
-	return s.base(binaryDigit, "binary")
+	return s.base(text.BinaryDigit, "binary")
 }
 
 func (s *Scanner) octal() (token text.Token) {
-	return s.base(octalDigit, "octal")
+	return s.base(text.OctalDigit, "octal")
 }
 
-func (s *Scanner) hex() (token text.Token) {
-	return s.base(hexDigit, "hexadecimal")
+func (s *Scanner) decimal() (token text.Token) {
+	return s.base(text.Digit, "decimal")
 }
 
-func (s *Scanner) tryExponent() bool {
-	return exponentChar(s.peek())
+func (s *Scanner) hexadecimal() (token text.Token) {
+	return s.base(text.HexDigit, "hexadecimal")
 }
 
-// ('e' | 'E') ('+' | '-')? digit+
 func (s *Scanner) exponent() (token text.Token) {
-	if s.matchIf(exponentChar) {
-		s.match('+', '-') // optional
-		if !s.atLeastOne(digit) {
-			s.error(s.currentPos(), "expected at least one exponent digit in float literal")
-			content := s.text()
-			cut := strings.LastIndexFunc(content, exponentChar)
-			token = text.Token{
-				Type: text.FloatType,
-				Pos:  s.pos(),
-				Text: content[:cut],
-			}
+	if s.acceptIf(text.Exponent) {
+		s.accept('+', '-') // optional
+		if !s.atLeastOne(text.Digit) {
+			s.syntaxError(s.currentPos(), "expected at least one exponent digit in float literal")
+			content := s.data()
+			cut := strings.LastIndexFunc(content, text.Exponent)
+			token = s.wrapTokenWith(text.FloatType, content[:cut])
 			return
 		}
-		token = text.Token{
-			Type: text.FloatType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
-		return
 	}
-	token = text.Token{
-		Type: text.FloatType,
-		Pos:  s.pos(),
-		Text: s.text(),
-	}
+	token = s.wrapTokenAs(text.FloatType)
 	return
 }
 
-// digit+ exponent?
 func (s *Scanner) decimalPart() (token text.Token) {
-	if !s.atLeastOne(digit) {
-		s.error(s.currentPos(), "expected at least one digit after decimal point in float literal")
+	if !s.atLeastOne(text.Digit) {
+		s.syntaxError(s.currentPos(), "expected at least one digit after decimal point in float literal, found '%c'", s.peek())
 	}
 	token = s.exponent()
 	return
 }
 
-// digit+ ('.' decimalPart | exponent)?
 func (s *Scanner) number() (token text.Token) {
 	switch {
-	case s.match('.'):
+	case s.acceptIf(text.Digit):
+		token = s.number()
+	case s.accept('.'):
 		token = s.decimalPart()
-	case s.tryExponent():
+	case s.matchIf(text.Exponent):
 		token = s.exponent()
 	default:
-		token = text.Token{
-			Type: text.IntegerType,
-			Pos:  s.pos(),
-			Text: s.text(),
-		}
+		token = s.wrapTokenWith(text.IntegerType, s.text())
 	}
 	return
 }
 
-func (s *Scanner) escape() (seq string) {
-	pos := text.Pos{s.line, s.currentCol() - 2}
-	switch {
-	case s.match('n'):
-		seq = "\n"
-	case s.match('r'):
-		seq = "\r"
-	case s.match('t'):
-		seq = "\t"
-	case s.match('\\'):
-		seq = "\\"
-	case s.match('"'):
-		seq = "\""
-	case s.match('x'):
-		first := s.matchIf(hexDigit)
-		second := s.matchIf(hexDigit)
-		if !first || !second {
-			s.error(pos, "malformed hexadecimal escape sequence. Use '\\x1f' for instance.")
-		}
-		text := s.text()
-		val := 16*hexValue(text[len(text)-2]) + hexValue(text[len(text)-1])
-		if val == 0 {
-			s.warning(pos, "null bytes in string literals are ignored")
-			return
-		}
-		seq = string(val)
-	case s.match('0'):
-		s.warning(pos, "null bytes in string literals are ignored")
-	}
-	return
-}
+////////////////////////////////////////////////////////////////////////////////
+// String, Char & escapes
 
-func (s *Scanner) string() (token text.Token) {
-	var value string
-	for {
+func (s *Scanner) escape(digits fragments.Fragment, expected int) {
+	seq := text.EscapeBuffer(expected)
+	for n := 0; n < expected; n++ {
 		switch {
-		case s.eof() || s.match('\n'):
-			s.error(s.pos(), "unclosed string literal")
-			token = text.Token{
-				Type: text.ErrorType,
-				Pos:  s.pos(),
-				Text: s.text(),
-			}
+		case s.matchIf(digits):
+			seq[n] = s.peek()
+			s.skipRune()
+		default:
+			s.syntaxError(s.currentPos(), "invalid character in escape sequence (found %q, expected hexadecimal digit)", s.peek())
 			return
-		case s.match('\\'):
-			value += s.escape()
-		case s.match('"'):
-			token = text.Token{
-				Type: text.StringType,
-				Pos:  s.pos(),
-				Text: value,
-			}
+		}
+	}
+	s.ingest(seq.Rune())
+}
+
+func (s *Scanner) invalidEscape() {
+	s.syntaxError(s.currentPos(), "invalid escape character")
+	s.advance()
+}
+
+func (s *Scanner) litRune() {
+	switch {
+	case s.match('\\'):
+		s.skipRune()
+		switch s.peek() {
+		case 'b':
+			s.ingest('\b')
+		case 't':
+			s.ingest('\t')
+		case 'n':
+			s.ingest('\n')
+		case 'f':
+			s.ingest('\f')
+		case 'r':
+			s.ingest('\r')
+		case '"':
+			s.ingest('"')
+		case '\'':
+			s.ingest('\'')
+		case '\\':
+			s.ingest('\\')
+		case 'x', 'X':
+			s.skipRune()
+			s.escape(text.HexDigit, 2)
+			return
+		case 'u', 'U':
+			s.skipRune()
+			s.escape(text.HexDigit, 4)
 			return
 		default:
-			value += string(s.advance())
+			s.invalidEscape()
 		}
+		s.skipRune()
+	default:
+		s.advance()
+	}
+}
+
+func (s *Scanner) litRunes(del rune) {
+	for !s.match(del) && !s.eof() && !s.match(text.SU, text.CR, text.LF) {
+		s.litRune()
+	}
+}
+
+func (s *Scanner) string() {
+	s.litRunes('"')
+	if s.match('"') {
+		s.skipRune()
+	} else {
+		s.syntaxError(s.currentPos(), "unclosed string literal")
 	}
 }

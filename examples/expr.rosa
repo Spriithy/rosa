@@ -1,7 +1,5 @@
-module rosa
+module "rosa.compiler\u000A"
 
-def x = 1
+def square(x) = x * x + 0
 
-def y = -2
-
-def z = 1.3e-4
+def legit = (Just 1.0e+0) >>= square

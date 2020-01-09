@@ -31,6 +31,7 @@ func NewParser(path string) *Parser {
 
 func (p *Parser) error(token text.Token, err error) {
 	p.Logs = append(p.Logs, Log{
+		Path:    p.path,
 		Level:   LogError,
 		Message: err.Error(),
 		Pos:     token.Pos,
@@ -39,6 +40,7 @@ func (p *Parser) error(token text.Token, err error) {
 
 func (p *Parser) errorf(token text.Token, message string, args ...interface{}) {
 	p.Logs = append(p.Logs, Log{
+		Path:    p.path,
 		Level:   LogError,
 		Message: fmt.Sprintf(message, args...),
 		Pos:     token.Pos,

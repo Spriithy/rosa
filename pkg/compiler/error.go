@@ -1,22 +1,23 @@
 package compiler
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/Spriithy/rosa/pkg/compiler/text"
 )
 
 type Log struct {
+	Path    string
 	Level   string
 	Message string
 	Pos     text.Pos
 }
 
 const (
-	LogError   = "error"
-	LogWarning = "warning"
+	LogSyntaxError = "syntax error"
+	LogError       = "error"
 )
 
-func (l Log) asError() error {
-	return errors.New(l.Message)
+func (l Log) AsError() error {
+	return fmt.Errorf("%s:%d:%d: %s: %s", l.Path, l.Pos.Line, l.Pos.Col, l.Level, l.Message)
 }
