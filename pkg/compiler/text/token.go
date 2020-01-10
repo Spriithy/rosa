@@ -23,9 +23,29 @@ func (pos Pos) String() (s string) {
 	return
 }
 
+type TokenType struct {
+	Name       string
+	Paraphrase string
+}
+
+func (t TokenType) IsValid() bool {
+	return t.Name != ""
+}
+
+func (t TokenType) Equals(other TokenType) bool {
+	return t.Name == other.Name
+}
+
+func (t TokenType) String() string {
+	if t.Paraphrase != "" {
+		return t.Paraphrase
+	}
+	return t.Name
+}
+
 type Token struct {
+	Type  TokenType
 	Text  string
-	Type  string
 	Spans int
 	Pos
 }
@@ -34,29 +54,65 @@ func (t Token) String() string {
 	return fmt.Sprintf("%s: %s: %q}", t.Pos, t.Type, t.Text)
 }
 
-const (
-	ErrorType      = "ERROR"
-	EOF            = "EOF"
-	IdentifierType = "IDENTIFIER"
-	KeywordType    = "KEYWORD"
-	IntegerLit     = "INTEGER"
-	FloatLit       = "FLOAT"
-	CharLit        = "CHAR"
-	StringLit      = "STRING"
-	SeparatorType  = "SEPARATOR"
-	OperatorType   = "OPERATOR"
+var (
+	tokenTypes = map[string]TokenType{}
+
+	// Generic Token types
+
+	ErrorType      = registerTokenType("Error", "an error")
+	EOF            = registerTokenType("Eof", "end of file")
+	IdentifierType = registerTokenType("Identifier", "an identifier")
+	KeywordType    = registerTokenType("Keyword", "a keyword")
+	IntegerLit     = registerTokenType("IntegerLit", "an integer")
+	FloatLit       = registerTokenType("FloatLit", "a float")
+	CharLit        = registerTokenType("CharLit", "a character literal")
+	StringLit      = registerTokenType("StringLit", "a string literal")
+	SeparatorType  = registerTokenType("Separator", "a separator")
+	OperatorType   = registerTokenType("Operator", "an operator")
+
+	// Specific Token types
+
+	LparType      = registerCharToken('(')
+	RparType      = registerCharToken(')')
+	LbrkType      = registerCharToken('[')
+	RbrkType      = registerCharToken(']')
+	LbrcType      = registerCharToken('{')
+	RbrcType      = registerCharToken('}')
+	ColonType     = registerCharToken(':')
+	SemicolonType = registerCharToken(';')
+	CommaType     = registerCharToken(',')
+	DotType       = registerCharToken('.')
+	QmarkType     = registerCharToken('?')
 )
 
-func tokenOf(typ string) func(Token) bool {
+func registerCharToken(r rune) TokenType {
+	name := fmt.Sprintf("%c", r)
+	paraphrase := fmt.Sprintf("%q", r)
+	return registerTokenType(name, paraphrase)
+}
+
+func registerTokenType(name, paraphrase string) (typ TokenType) {
+	typ = TokenType{
+		Name:       name,
+		Paraphrase: paraphrase,
+	}
+	tokenTypes[name] = typ
+	return
+}
+
+func tokenOf(typ TokenType) func(Token) bool {
 	return func(tok Token) bool { return tok.Type == typ }
 }
 
-func typedText(typ string, text string) func(Token) bool {
+func typedText(typ TokenType, text string) func(Token) bool {
 	return func(tok Token) bool { return tokenOf(typ)(tok) && tok.Text == text }
 }
 
 func sep(sep string) func(Token) bool {
 	separators[sep] = true
+	if typ := tokenTypes[sep]; typ.IsValid() {
+		return typedText(typ, sep)
+	}
 	return typedText(SeparatorType, sep)
 }
 
@@ -87,8 +143,10 @@ var (
 	operators  = map[string]bool{}
 )
 
-func TokenType(str string) (typ string) {
+func TypeOfToken(str string) (typ TokenType) {
 	switch {
+	case tokenTypes[str].IsValid():
+		typ = tokenTypes[str]
 	case keywords[str]:
 		typ = KeywordType
 	case separators[str]:
@@ -124,17 +182,17 @@ var (
 	True    = keyword("true")
 	False   = keyword("false")
 	Boolean = anyOf(True, False)
-	Literal = anyOf(Integer, Float, String, Boolean)
+	Literal = anyOf(Integer, Float, String, Char, Boolean)
 
-	Comma     = sep(",")
-	Colon     = sep(":")
-	Semicolon = sep(";")
-	Lpar      = sep("(")
-	Rpar      = sep(")")
-	Lbrk      = sep("[")
-	Rbrk      = sep("]")
-	Lbrc      = sep("{")
-	Rbrc      = sep("}")
+	Comma     = tokenOf(CommaType)
+	Colon     = tokenOf(ColonType)
+	Semicolon = tokenOf(SemicolonType)
+	Lpar      = tokenOf(LparType)
+	Rpar      = tokenOf(RparType)
+	Lbrk      = tokenOf(LbrkType)
+	Rbrk      = tokenOf(RbrkType)
+	Lbrc      = tokenOf(LbrcType)
+	Rbrc      = tokenOf(RbrcType)
 
 	Arrow    = op("=>")
 	Dot      = op(".")

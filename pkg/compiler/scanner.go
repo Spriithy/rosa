@@ -213,8 +213,8 @@ func (s *Scanner) ingest(r rune) {
 	s.tokenData.WriteRune(r)
 }
 
-func (s *Scanner) tokenType() string {
-	return text.TokenType(s.data())
+func (s *Scanner) tokenType() text.TokenType {
+	return text.TypeOfToken(s.data())
 }
 
 func (s *Scanner) wrapToken() text.Token {
@@ -226,7 +226,7 @@ func (s *Scanner) wrapToken() text.Token {
 	}
 }
 
-func (s *Scanner) wrapTokenAs(typ string) text.Token {
+func (s *Scanner) wrapTokenAs(typ text.TokenType) text.Token {
 	return text.Token{
 		Text:  s.data(),
 		Type:  typ,
@@ -235,7 +235,7 @@ func (s *Scanner) wrapTokenAs(typ string) text.Token {
 	}
 }
 
-func (s *Scanner) wrapTokenWith(typ, data string) text.Token {
+func (s *Scanner) wrapTokenWith(typ text.TokenType, data string) text.Token {
 	return text.Token{
 		Text:  data,
 		Type:  typ,
@@ -281,7 +281,7 @@ func (s *Scanner) next() (token text.Token) {
 	case s.acceptIf(text.NonZeroDigit):
 		token = s.number()
 	case s.acceptIf(text.IsSeparator):
-		token = s.wrapTokenAs(text.SeparatorType)
+		token = s.wrapToken()
 	case s.match('"'):
 		s.skipRune()
 		if s.match('"') {

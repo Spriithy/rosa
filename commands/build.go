@@ -34,7 +34,7 @@ func buildAction(c *cli.Context) (err error) {
 	fmt.Println(tree)
 	*/
 	s := compiler.NewScanner(file)
-	for token := s.Scan(); token.Type != text.EOF; token = s.Scan() {
+	for token := s.Scan(); !text.Eof(token); token = s.Scan() {
 		fmt.Println(token.String())
 	}
 	for i, log := range s.Logs {
