@@ -42,8 +42,8 @@ func ExceptString(str string) Fragment {
 }
 
 func Range(lo, hi rune) Fragment {
-	runes := make([]rune, hi-lo)
-	for r := lo; r < hi; r++ {
+	runes := make([]rune, hi-lo+1)
+	for r := lo; r <= hi; r++ {
 		runes[r-lo] = r
 	}
 	return Any(runes...)

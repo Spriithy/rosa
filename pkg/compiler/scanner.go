@@ -97,15 +97,17 @@ func (s *Scanner) currentCol() int {
 
 func (s *Scanner) pos() text.Pos {
 	return text.Pos{
-		Line: s.line,
-		Col:  s.col(),
+		FileName: s.path,
+		Line:     s.line,
+		Column:   s.col(),
 	}
 }
 
 func (s *Scanner) currentPos() text.Pos {
 	return text.Pos{
-		Line: s.line,
-		Col:  s.currentCol(),
+		FileName: s.path,
+		Line:     s.line,
+		Column:   s.currentCol(),
 	}
 }
 
@@ -217,25 +219,28 @@ func (s *Scanner) tokenType() string {
 
 func (s *Scanner) wrapToken() text.Token {
 	return text.Token{
-		Text: s.data(),
-		Type: s.tokenType(),
-		Pos:  s.pos(),
+		Text:  s.data(),
+		Type:  s.tokenType(),
+		Pos:   s.pos(),
+		Spans: s.start + len(s.text()),
 	}
 }
 
 func (s *Scanner) wrapTokenAs(typ string) text.Token {
 	return text.Token{
-		Text: s.data(),
-		Type: typ,
-		Pos:  s.pos(),
+		Text:  s.data(),
+		Type:  typ,
+		Pos:   s.pos(),
+		Spans: s.start + len(s.text()),
 	}
 }
 
 func (s *Scanner) wrapTokenWith(typ, data string) text.Token {
 	return text.Token{
-		Text: data,
-		Type: typ,
-		Pos:  s.pos(),
+		Text:  data,
+		Type:  typ,
+		Pos:   s.pos(),
+		Spans: s.start + len(s.text()),
 	}
 }
 
@@ -272,7 +277,7 @@ func (s *Scanner) next() (token text.Token) {
 			token = s.number()
 		}
 		s.number()
-		token = s.wrapTokenAs(text.IntegerType)
+		token = s.wrapTokenAs(text.IntegerLit)
 	case s.acceptIf(text.NonZeroDigit):
 		token = s.number()
 	case s.acceptIf(text.IsSeparator):
@@ -285,9 +290,12 @@ func (s *Scanner) next() (token text.Token) {
 				// s.rawString()
 			}
 		} else {
-			s.string()
+			s.stringLit()
 		}
-		token = s.wrapTokenAs(text.StringType)
+		token = s.wrapTokenAs(text.StringLit)
+	case s.match('\''):
+		s.charLit()
+		token = s.wrapTokenAs(text.CharLit)
 	default:
 		s.advance()
 		token = s.wrapTokenWith(text.ErrorType, s.text())
@@ -295,23 +303,6 @@ func (s *Scanner) next() (token text.Token) {
 	s.tokenData.Reset()
 	return
 }
-
-////////////////////////////////////////////////////////////////////////////////
-
-/*
-When an expression uses multiple operators, the operators are evaluated based on the priority of the first character:
-
-(characters not shown below)
-* / %
-+ -
-:
-= !
-< >
-&
-^
-|
-(all letters)
-*/
 
 ////////////////////////////////////////////////////////////////////////////////
 // Comments
@@ -417,16 +408,16 @@ func (s *Scanner) operatorRest() {
 func (s *Scanner) base(digits fragments.Fragment, baseName string) (token text.Token) {
 	if !s.atLeastOne(text.Digit) {
 		s.syntaxError(s.currentPos(), "expected at least one digit in %s integer literal", baseName)
-		token = s.wrapTokenAs(text.IntegerType)
+		token = s.wrapTokenAs(text.IntegerLit)
 		return
 	}
 	content := s.text()
 	if offset := strings.IndexFunc(content[2:], fragments.Not(digits)); offset >= 0 {
 		pos := s.pos()
-		pos.Col += offset
+		pos.Column += offset
 		s.syntaxError(pos, "unexpected digit in %s literal: '%c'", baseName, content[2:][offset])
 	}
-	token = s.wrapTokenAs(text.IntegerType)
+	token = s.wrapTokenAs(text.IntegerLit)
 	return
 }
 
@@ -453,11 +444,11 @@ func (s *Scanner) exponent() (token text.Token) {
 			s.syntaxError(s.currentPos(), "expected at least one exponent digit in float literal")
 			content := s.data()
 			cut := strings.LastIndexFunc(content, text.Exponent)
-			token = s.wrapTokenWith(text.FloatType, content[:cut])
+			token = s.wrapTokenWith(text.FloatLit, content[:cut])
 			return
 		}
 	}
-	token = s.wrapTokenAs(text.FloatType)
+	token = s.wrapTokenAs(text.FloatLit)
 	return
 }
 
@@ -478,7 +469,7 @@ func (s *Scanner) number() (token text.Token) {
 	case s.matchIf(text.Exponent):
 		token = s.exponent()
 	default:
-		token = s.wrapTokenWith(text.IntegerType, s.text())
+		token = s.wrapTokenWith(text.IntegerLit, s.text())
 	}
 	return
 }
@@ -550,11 +541,42 @@ func (s *Scanner) litRunes(del rune) {
 	}
 }
 
-func (s *Scanner) string() {
+func (s *Scanner) stringLit() {
 	s.litRunes('"')
 	if s.match('"') {
 		s.skipRune()
 	} else {
-		s.syntaxError(s.currentPos(), "unclosed string literal")
+		s.syntaxError(s.currentPos(), "unclosed stringLit literal")
 	}
+}
+
+func (s *Scanner) charLit() {
+	s.skipRune()
+	switch {
+	case s.matchIf(text.IsIdentifierStart):
+		s.charLitOr(s.identRest)
+	case s.matchIf(text.IsOperatorPart) && !s.match('\\'):
+		s.charLitOr(s.operatorRest)
+	case !s.eof() && !s.match(text.SU, text.CR, text.LF):
+		emptyCharLit := s.match('\'')
+		s.litRune()
+		switch {
+		case s.match('\''):
+			if emptyCharLit {
+				s.syntaxError(s.pos(), "empty character literal (use '\\'' for single quote)")
+			} else {
+				s.skipRune()
+			}
+		case emptyCharLit:
+			s.syntaxError(s.pos(), "empty character literal")
+		default:
+			s.syntaxError(s.currentPos(), "unclosed character literal")
+		}
+	default:
+		s.syntaxError(s.currentPos(), "unclosed character literal")
+	}
+}
+
+func (s *Scanner) charLitOr(op func()) {
+
 }

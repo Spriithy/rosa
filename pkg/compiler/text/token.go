@@ -5,18 +5,33 @@ import (
 )
 
 type Pos struct {
-	Line int
-	Col  int
+	FileName string
+	Line     int
+	Column   int
+}
+
+func (pos Pos) String() (s string) {
+	if pos.FileName != "" {
+		s += pos.FileName + ":"
+	}
+	if pos.Line > 0 {
+		s += fmt.Sprintf("%d", pos.Line)
+		if pos.Column != 0 {
+			s += fmt.Sprintf(":%d", pos.Column)
+		}
+	}
+	return
 }
 
 type Token struct {
-	Text string
-	Type string
+	Text  string
+	Type  string
+	Spans int
 	Pos
 }
 
 func (t Token) String() string {
-	return fmt.Sprintf("Token{(%d,%d), %s, %q}", t.Line, t.Col, t.Type, t.Text)
+	return fmt.Sprintf("%s: %s: %q}", t.Pos, t.Type, t.Text)
 }
 
 const (
@@ -24,9 +39,10 @@ const (
 	EOF            = "EOF"
 	IdentifierType = "IDENTIFIER"
 	KeywordType    = "KEYWORD"
-	IntegerType    = "INTEGER"
-	FloatType      = "FLOAT"
-	StringType     = "STRING"
+	IntegerLit     = "INTEGER"
+	FloatLit       = "FLOAT"
+	CharLit        = "CHAR"
+	StringLit      = "STRING"
 	SeparatorType  = "SEPARATOR"
 	OperatorType   = "OPERATOR"
 )
@@ -88,9 +104,10 @@ func TokenType(str string) (typ string) {
 var (
 	Eof        = tokenOf(EOF)
 	Identifier = tokenOf(IdentifierType)
-	Integer    = tokenOf(IntegerType)
-	Float      = tokenOf(FloatType)
-	String     = tokenOf(StringType)
+	Integer    = tokenOf(IntegerLit)
+	Float      = tokenOf(FloatLit)
+	Char       = tokenOf(CharLit)
+	String     = tokenOf(StringLit)
 
 	Module  = keyword("module")
 	Import  = keyword("import")

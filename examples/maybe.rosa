@@ -8,13 +8,13 @@ def maybe[T, U](t: T, f: U => T, mu: Maybe[U]) => T = match mu {
 }
 
 def isJust[T](mt: Maybe[T]) => Bool = match mt {
-    case Just t => True
-    case None   => False
+    case Just t => true
+    case None   => false
 }
 
 def isNone[T](mt: Maybe[T]) => Bool = match mt {
-    case Just t => False
-    case None   => True
+    case Just t => false
+    case None   => true
 }
 
 def unit[T](t: T) => Maybe[T] = Just t

@@ -11,7 +11,6 @@ import (
 
 var (
 	NoInputFileError = errors.New("no input file")
-	ScannerError     = errors.New("an error occured")
 )
 
 func BuildCommand() *cli.Command {
@@ -33,12 +32,15 @@ func buildAction(c *cli.Context) (err error) {
 	result := p.Parse()
 	tree := result.Accept(ast.AstPrinter{})
 	fmt.Println(tree)
-	*/s := compiler.NewScanner(file)
+	*/
+	s := compiler.NewScanner(file)
 	for token := s.Scan(); token.Type != text.EOF; token = s.Scan() {
 		fmt.Println(token.String())
 	}
-	for _, log := range s.Logs {
-		fmt.Println(log.AsError())
+	for i, log := range s.Logs {
+		if log.Pos.Line != s.Logs[i].Pos.Line {
+			fmt.Println(log.AsError())
+		}
 	}
 	return
 }

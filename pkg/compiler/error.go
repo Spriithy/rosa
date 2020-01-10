@@ -19,5 +19,5 @@ const (
 )
 
 func (l Log) AsError() error {
-	return fmt.Errorf("%s:%d:%d: %s: %s", l.Path, l.Pos.Line, l.Pos.Col, l.Level, l.Message)
+	return fmt.Errorf("%s: %s: %s", l.Pos, l.Level, l.Message)
 }
