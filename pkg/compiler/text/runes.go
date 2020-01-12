@@ -112,6 +112,19 @@ func IsOperatorPart(r rune) bool {
 	}
 }
 
+func IsParenMatch(left, right rune) bool {
+	switch left {
+	case '(':
+		return right == ')'
+	case '[':
+		return right == ']'
+	case '{':
+		return right == '}'
+	default:
+		return false
+	}
+}
+
 var (
 	IsSeparator  = fragments.Any('(', ')', '[', ']', '{', '}', '.', ',', ';')
 	NonZeroDigit = fragments.Range('1', '9')

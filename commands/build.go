@@ -38,7 +38,7 @@ func buildAction(c *cli.Context) (err error) {
 		fmt.Println(token.String())
 	}
 	for i, log := range s.Logs {
-		if log.Pos.Line != s.Logs[i].Pos.Line {
+		if i == 0 || log.Pos.Line != s.Logs[i-1].Pos.Line {
 			fmt.Println(log.AsError())
 		}
 	}

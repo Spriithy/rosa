@@ -51,7 +51,7 @@ type Token struct {
 }
 
 func (t Token) String() string {
-	return fmt.Sprintf("%s: %s: %q}", t.Pos, t.Type, t.Text)
+	return fmt.Sprintf("%s: %s: %q", t.Pos, t.Type.Name, t.Text)
 }
 
 var (
@@ -82,7 +82,6 @@ var (
 	SemicolonType = registerCharToken(';')
 	CommaType     = registerCharToken(',')
 	DotType       = registerCharToken('.')
-	QmarkType     = registerCharToken('?')
 )
 
 func registerCharToken(r rune) TokenType {

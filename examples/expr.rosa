@@ -1,5 +1,6 @@
-module "rosa.compiler\u000A"
+module "rosa.compiler"
 
 def square(x) = x * x + '0' + '\xFF'
 
 def legit = (Just 1.0e+0) >>= square
+)

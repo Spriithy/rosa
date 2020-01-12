@@ -21,7 +21,44 @@ type Scanner struct {
 	Logs        []Log
 
 	openComments int
+	parens       stack
 	tokenData    strings.Builder
+}
+
+type tokenStack []text.Token
+
+type stack interface {
+	push(text.Token)
+	peek() text.Token
+	pop() text.Token
+	isEmpty() bool
+}
+
+func (s *tokenStack) push(token text.Token) {
+	*s = append(*s, token)
+}
+
+func (s *tokenStack) pop() (token text.Token) {
+	if s.isEmpty() {
+		return
+	}
+	last := len(*s) - 1
+	token = (*s)[last]
+	*s = (*s)[:last]
+	return
+}
+
+func (s *tokenStack) peek() (token text.Token) {
+	if s.isEmpty() {
+		return
+	}
+	last := len(*s) - 1
+	token = (*s)[last]
+	return
+}
+
+func (s *tokenStack) isEmpty() bool {
+	return len(*s) == 0
 }
 
 func fileExists(path string) bool {
@@ -46,6 +83,7 @@ func NewScanner(path string) (scanner *Scanner) {
 		path:   path,
 		line:   1,
 		source: []rune(string(source)),
+		parens: new(tokenStack),
 	}
 	return
 }
@@ -282,6 +320,21 @@ func (s *Scanner) next() (token text.Token) {
 		token = s.number()
 	case s.acceptIf(text.IsSeparator):
 		token = s.wrapToken()
+		switch {
+		case text.Lpar(token), text.Lbrk(token), text.Lbrc(token):
+			s.parens.push(token)
+		case text.Rpar(token), text.Rbrk(token), text.Rbrc(token):
+			switch {
+			case s.parens.isEmpty():
+				s.syntaxError(s.pos(), "%s unexpected", token.Type)
+				token = s.next()
+			case text.IsParenMatch(rune(s.parens.peek().Text[0]), rune(token.Text[0])):
+				s.parens.pop()
+			default:
+				s.syntaxError(s.pos(), "%s", s.parens)
+				token = s.next()
+			}
+		}
 	case s.match('"'):
 		s.skipRune()
 		if s.match('"') {
