@@ -90,19 +90,6 @@ func NewScanner(path string) (scanner *Scanner) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (s *Scanner) Scan() (token text.Token) {
-	if s.eof() {
-		token = text.Token{
-			Type: text.EOF,
-			Pos:  s.currentPos(),
-		}
-		return
-	}
-	token = s.next()
-	s.tokens = append(s.tokens, token)
-	return
-}
-
 func (s *Scanner) error(pos text.Pos, message string, args ...interface{}) {
 	s.Logs = append(s.Logs, Log{
 		Path:    s.path,
@@ -282,7 +269,26 @@ func (s *Scanner) wrapTokenWith(typ text.TokenType, data string) text.Token {
 	}
 }
 
+func (s *Scanner) Scan() (token text.Token) {
+	if s.eof() {
+		// report all unmatched parens (, [, {
+		for !s.parens.isEmpty() {
+			paren := s.parens.pop()
+			s.syntaxError(paren.Pos, "unmatched %s", paren.Type)
+		}
+		token = text.Token{
+			Type: text.EOF,
+			Pos:  s.currentPos(),
+		}
+		return
+	}
+	token = s.next()
+	s.tokens = append(s.tokens, token)
+	return
+}
+
 func (s *Scanner) next() (token text.Token) {
+	s.tokenData.Reset()
 	s.start = s.current // reset token pos
 	switch {
 	case s.eof():
@@ -327,12 +333,10 @@ func (s *Scanner) next() (token text.Token) {
 			switch {
 			case s.parens.isEmpty():
 				s.syntaxError(s.pos(), "%s unexpected", token.Type)
-				token = s.next()
-			case text.IsParenMatch(rune(s.parens.peek().Text[0]), rune(token.Text[0])):
+			case text.IsParenMatch(s.parens.peek(), token):
 				s.parens.pop()
 			default:
-				s.syntaxError(s.pos(), "%s", s.parens)
-				token = s.next()
+				s.syntaxError(s.pos(), "%s unexpected", token.Type)
 			}
 		}
 	case s.match('"'):
@@ -353,7 +357,6 @@ func (s *Scanner) next() (token text.Token) {
 		s.advance()
 		token = s.wrapTokenWith(text.ErrorType, s.text())
 	}
-	s.tokenData.Reset()
 	return
 }
 

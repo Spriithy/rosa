@@ -37,10 +37,8 @@ func buildAction(c *cli.Context) (err error) {
 	for token := s.Scan(); !text.Eof(token); token = s.Scan() {
 		fmt.Println(token.String())
 	}
-	for i, log := range s.Logs {
-		if i == 0 || log.Pos.Line != s.Logs[i-1].Pos.Line {
-			fmt.Println(log.AsError())
-		}
+	for _, log := range s.Logs {
+		fmt.Println(log.AsError())
 	}
 	return
 }

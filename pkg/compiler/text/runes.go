@@ -58,7 +58,7 @@ func EscapeRune(r rune) string {
 		return
 	}
 	seq := EscapeBuffer(4)
-	seq[0] = hex((r >> 12))
+	seq[0] = hex(r >> 12)
 	seq[1] = hex((r >> 8) % 16)
 	seq[2] = hex((r >> 4) % 16)
 	seq[3] = hex((r >> 0) % 16)
@@ -112,17 +112,8 @@ func IsOperatorPart(r rune) bool {
 	}
 }
 
-func IsParenMatch(left, right rune) bool {
-	switch left {
-	case '(':
-		return right == ')'
-	case '[':
-		return right == ']'
-	case '{':
-		return right == '}'
-	default:
-		return false
-	}
+func IsParenMatch(left, right Token) bool {
+	return Lpar(left) && Rpar(right) || Lbrc(left) && Rbrc(right) || Lbrk(left) && Rbrk(right)
 }
 
 var (
